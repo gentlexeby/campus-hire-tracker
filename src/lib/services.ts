@@ -21,6 +21,7 @@ import {
   defaultTimezone,
   DomainError,
   normalizeLookupText,
+  normalizeOptionalMarkdown,
   normalizeOptionalText,
   parseDomainInput,
   restoreApplicationInputSchema,
@@ -960,7 +961,7 @@ export async function createApplication(input: CreateApplicationInput): Promise<
       archivedFromStage: null,
       archiveReason: null,
       archiveNote: null,
-      notesMarkdown: normalizeOptionalText(data.notesMarkdown),
+      notesMarkdown: normalizeOptionalMarkdown(data.notesMarkdown),
       lastActivityAtMs: now,
       isSample: 0,
       createdAtMs: now,
@@ -1085,7 +1086,7 @@ export async function updateApplication(
       changes.sourceDetail = sourceDetail;
     }
     if (data.sourceUrl !== undefined) changes.sourceUrl = data.sourceUrl;
-    if (data.notesMarkdown !== undefined) changes.notesMarkdown = normalizeOptionalText(data.notesMarkdown);
+    if (data.notesMarkdown !== undefined) changes.notesMarkdown = normalizeOptionalMarkdown(data.notesMarkdown);
     const updatedApplication = await tx
       .update(applications)
       .set({ ...changes, ...(data.attention ? {} : { version: sql`${applications.version} + 1` }) })
@@ -1341,7 +1342,7 @@ export async function createEvent(input: CreateEventInput): Promise<EventDto> {
       timezone,
       location: normalizeOptionalText(data.location),
       meetingUrl: data.meetingUrl ?? null,
-      notesMarkdown: normalizeOptionalText(data.notesMarkdown),
+      notesMarkdown: normalizeOptionalMarkdown(data.notesMarkdown),
       isHardDeadline: data.isHardDeadline ? 1 : 0,
       completedAtMs: null,
       icsUid: `${id}@campus-hire-tracker.local`,
@@ -1418,7 +1419,7 @@ export async function updateEvent(id: string, input: UpdateEventInput): Promise<
     if (data.timezone !== undefined) changes.timezone = data.timezone;
     if (data.location !== undefined) changes.location = normalizeOptionalText(data.location);
     if (data.meetingUrl !== undefined) changes.meetingUrl = data.meetingUrl;
-    if (data.notesMarkdown !== undefined) changes.notesMarkdown = normalizeOptionalText(data.notesMarkdown);
+    if (data.notesMarkdown !== undefined) changes.notesMarkdown = normalizeOptionalMarkdown(data.notesMarkdown);
     if (data.isHardDeadline !== undefined) changes.isHardDeadline = data.isHardDeadline ? 1 : 0;
     const candidate = eventDto({ ...event, ...changes, version: event.version + 1 } as EventRow);
     const conflicts = await findConflictsForSchedule(tx, workspaceId, candidate, id);

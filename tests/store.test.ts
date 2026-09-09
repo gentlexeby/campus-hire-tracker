@@ -329,4 +329,16 @@ describe("local data store", () => {
     expect(after?.timeline).toHaveLength(before!.timeline.length);
     expect(after?.version).toBe(staged.version);
   });
+
+  it("preserves multiline Markdown notes exactly across persistence", async () => {
+    const application = await createApplication({ companyName: "备注公司", positionTitle: "前端工程师" });
+    const notesMarkdown = "  面试重点\n\n- React\n  - 并发渲染  \n\n```ts\nconst answer = 42;\n```";
+
+    await updateApplication(application.id, {
+      notesMarkdown,
+      expectedVersion: application.version,
+    });
+
+    expect((await getApplicationDetail(application.id))?.notesMarkdown).toBe(notesMarkdown);
+  });
 });

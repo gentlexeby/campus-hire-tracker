@@ -55,6 +55,8 @@ export const eventStatusSchema = z.enum(EVENT_STATUSES);
 const requiredText = (label: string, max: number) =>
   z.string().trim().min(1, `${label}不能为空`).max(max, `${label}不能超过 ${max} 个字符`);
 const optionalText = (max: number) => z.string().trim().max(max).nullable().optional();
+const optionalMarkdown = (max: number) =>
+  z.string().max(max, `内容不能超过 ${max} 个字符`).nullable().optional();
 const optionalUrl = z
   .union([z.url({ protocol: /^https?$/ }), z.literal(""), z.null()])
   .optional()
@@ -126,7 +128,7 @@ const applicationFields = {
   sourceKind: applicationSourceSchema.default("UNSPECIFIED"),
   sourceDetail: optionalText(200),
   sourceUrl: optionalUrl,
-  notesMarkdown: optionalText(100_000),
+  notesMarkdown: optionalMarkdown(100_000),
   tagNames: z.array(requiredText("标签", 80)).max(30).default([]),
   attention: applicationAttentionSchema.default({ mode: "NEEDS_ACTION" }),
   allowDuplicate: z.boolean().default(false),
@@ -217,7 +219,7 @@ const eventCommonFields = {
   timezone: requiredText("时区", 100).optional(),
   location: optionalText(500),
   meetingUrl: optionalUrl,
-  notesMarkdown: optionalText(100_000),
+  notesMarkdown: optionalMarkdown(100_000),
   isHardDeadline: z.boolean().default(false),
   allowConflicts: z.boolean().default(false),
 };
@@ -270,6 +272,12 @@ export function normalizeOptionalText(value: string | null | undefined): string 
   if (value == null) return null;
   const normalized = value.trim().replace(/\s+/g, " ");
   return normalized.length > 0 ? normalized : null;
+}
+
+export function normalizeOptionalMarkdown(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  const normalizedLineEndings = value.replace(/\r\n?/g, "\n");
+  return normalizedLineEndings.trim().length > 0 ? normalizedLineEndings : null;
 }
 
 export function defaultTimezone(): string {

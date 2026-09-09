@@ -6,6 +6,7 @@ import {
   createEventInputSchema,
   DomainError,
   normalizeLookupText,
+  normalizeOptionalMarkdown,
   parseDomainInput,
 } from "@/lib/domain";
 
@@ -13,6 +14,13 @@ describe("domain validation", () => {
   it("normalizes lookup text deterministically", () => {
     expect(normalizeLookupText("  字节   跳动  ")).toBe("字节 跳动");
     expect(normalizeLookupText("ＡＢＣ")).toBe("abc");
+  });
+
+  it("preserves Markdown whitespace while normalizing line endings", () => {
+    expect(normalizeOptionalMarkdown("  第一行\r\n\r\n  - 列表  ")).toBe(
+      "  第一行\n\n  - 列表  ",
+    );
+    expect(normalizeOptionalMarkdown(" \n\t ")).toBeNull();
   });
 
   it("applies safe application defaults", () => {

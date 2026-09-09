@@ -29,6 +29,11 @@ function text(formData: FormData, key: string) {
   return typeof raw === "string" ? raw.trim() : "";
 }
 
+function rawText(formData: FormData, key: string) {
+  const raw = formData.get(key);
+  return typeof raw === "string" ? raw : "";
+}
+
 function optionalText(formData: FormData, key: string) {
   const result = text(formData, key);
   return result || null;
@@ -213,6 +218,35 @@ export async function updateApplicationAction(_state: FormState, formData: FormD
   }
   refreshApplication(applicationId);
   return { ok: true, message: "概览已保存。" };
+}
+
+export async function updateApplicationNotesAction(_state: FormState, formData: FormData): Promise<FormState> {
+  const applicationId = text(formData, "applicationId");
+  const expectedVersion = numberOrUndefined(text(formData, "expectedVersion"));
+  if (!applicationId || expectedVersion === undefined) {
+    return {
+      code: "VALIDATION_ERROR",
+      message: "无法确认当前备注版本。浏览器草稿仍保留，请刷新页面后重试。",
+      values: formValues(formData),
+    };
+  }
+
+  try {
+    const updated = await updateApplication(applicationId, {
+      expectedVersion,
+      notesMarkdown: rawText(formData, "notesMarkdown"),
+    });
+    refreshApplication(applicationId);
+    return {
+      ok: true,
+      message: "备注已保存。",
+      savedAtMs: updated.updatedAtMs,
+      savedNotesMarkdown: updated.notesMarkdown,
+      savedVersion: updated.version,
+    };
+  } catch (error) {
+    return safeError(error, formData);
+  }
 }
 
 export async function setStageAction(_state: FormState, formData: FormData): Promise<FormState> {

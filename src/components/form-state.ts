@@ -24,6 +24,10 @@ export type FormState = {
   details?: SafeFormDetails;
   fieldErrors?: Record<string, string>;
   values?: Record<string, string>;
+  /** Returned only after a notes mutation so the browser draft can be reconciled safely. */
+  savedVersion?: number;
+  savedAtMs?: number;
+  savedNotesMarkdown?: string | null;
 };
 
 export const initialFormState: FormState = {};

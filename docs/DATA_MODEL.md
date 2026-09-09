@@ -549,7 +549,7 @@ CHECK 保证四个目标 FK 恰有一个非空且与 `target_type` 一致。分�
 这里的术语必须严格区分：
 
 - `CaptureDraft` 是本节 SQLite 表中的业务采集草稿，可包含规则/AI 解析建议，并进入备份与正式数据生命周期。
-- `EditorRecoveryDraft` 是 IndexedDB 中针对当前编辑器的短期崩溃恢复快照，不代表一个业务草稿，不同步进本表，正式保存或明确放弃后清除。
+- `EditorRecoveryDraft` 是 IndexedDB 中针对当前编辑器的短期崩溃恢复快照，不代表一个业务草稿，不同步进本表。每个编辑器实例使用独立 `draftId` 和递增 `revision`；删除必须核对修订号，正式保存只批量清理内容与数据库版本相同的候选，其他不同候选仅在用户明确放弃后清除。
 - `OfflineCaptureDraft` 是 IndexedDB 中离线创建、等待同步确认的采集草稿；恢复连接后必须先由用户确认，才转换为一个新的 `CaptureDraft` 或直接提交正式实体，不能与同 ID 的 SQLite 行双写。
 
 AI 只生成 `CaptureDraft` 建议。`CONFIRMED` 必须来自用户确认用例，随后写正式实体和时间线。三个类型不得在代码、埋点、导入/备份 manifest 或界面文案中统称为同一个“draft”。

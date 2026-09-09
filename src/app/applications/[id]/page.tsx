@@ -19,6 +19,7 @@ import {
   StageForm,
 } from "@/components/forms";
 import { Section, StatusPill } from "@/components/ui";
+import { RecoverableNotesEditor } from "@/components/recoverable-notes-editor";
 import {
   archiveApplicationAction,
   createEventAction,
@@ -26,6 +27,7 @@ import {
   setAttentionAction,
   setStageAction,
   updateApplicationAction,
+  updateApplicationNotesAction,
   updateEventStatusAction,
 } from "@/app/actions";
 import { toApplicationView, toEventView, toTimelineView } from "@/app/view-models";
@@ -85,7 +87,7 @@ export default async function ApplicationDetailPage({ params, searchParams }: Pa
       </header>
 
       <nav className="anchor-tabs" aria-label="申请详情章节">
-        <a href="#overview">概览</a><a href="#process">流程</a><a href="#events">事件</a><a href="#materials">资料</a><a href="#timeline">时间线</a>
+        <a href="#overview">概览</a><a href="#process">流程</a><a href="#events">事件</a><a href="#notes">备注</a><a href="#materials">资料</a><a href="#timeline">时间线</a>
       </nav>
 
       <div className="detail-grid">
@@ -127,6 +129,20 @@ export default async function ApplicationDetailPage({ params, searchParams }: Pa
               </div>
             ) : <p className="muted">还没有事件。</p>}
             {!isArchived ? <details className="form-details event-create-details"><summary>＋ 为这条申请新建事件</summary><div className="details-grid"><EventForm action={createEventAction} applications={[{ id: application.id, companyName: application.companyName, positionTitle: application.positionTitle }]} defaultApplicationId={application.id} /></div></details> : null}
+          </Section>
+
+          <Section id="notes" title="申请备注" description={isArchived ? "归档记录为只读；恢复后可以继续编辑。" : "未保存内容会暂存于当前浏览器；重新打开页面时由你决定是否恢复，系统不会静默覆盖。"}>
+            {isArchived ? (
+              <pre className={application.notesMarkdown ? "notes-readonly" : "notes-readonly is-empty"}>{application.notesMarkdown || "暂无备注"}</pre>
+            ) : (
+              <RecoverableNotesEditor
+                action={updateApplicationNotesAction}
+                applicationId={application.id}
+                notesMarkdown={application.notesMarkdown}
+                serverUpdatedAtMs={application.updatedAtMs}
+                serverVersion={application.version}
+              />
+            )}
           </Section>
 
           <Section id="materials" title="资料" description="JD、面经和附件将在下一阶段提供。">

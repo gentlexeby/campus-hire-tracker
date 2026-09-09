@@ -103,7 +103,7 @@
 7. 归档并选择原因，验证默认看板隐藏、归档筛选可见且能恢复。
 8. 导出含定时、全天、多提醒和长中文/换行/逗号/分号的 ICS；逐字节验证 UTF-8、CRLF、75-octet 折行不截断码点、TEXT 转义、UTC/`VALUE=DATE`、`DTSTAMP`、`SEQUENCE`、`VALARM` 和敏感字段排除。
 9. 更新、取消和软删除事件，验证同一 UID、更高 SEQUENCE，以及 PUBLISH 快照与单独 METHOD:CANCEL 文件；注入 CRLF/`BEGIN:VEVENT` 文本不能形成新属性。在受支持系统日历人工导入候选文件，只记录实际客户端的更新/去重行为，不把它当跨客户端保证。
-10. 在长文本编辑器输入未保存内容后刷新或强制结束浏览器，重新打开时由 M1 IndexedDB `EditorRecoveryDraft` 提示恢复；正式保存或明确放弃后快照清除，正常服务断连不能借此冒充离线创建。
+10. 在长文本编辑器输入未保存内容后刷新或强制结束浏览器，重新打开时由 M1 IndexedDB `EditorRecoveryDraft` 提示恢复；两个标签页写入不同内容时必须形成独立候选，任一标签页正式保存或放弃自己的修订都不得清除另一份不同内容。正式保存只清理与数据库内容相同的候选，正常服务断连不能借此冒充离线创建。
 11. 在纯 M1 数据集创建完整备份 v1，验证所有固定 `tables` 成员都存在，尚未开放的 M2/M3 表为规定的空数组；IndexedDB `EditorRecoveryDraft` 不在 manifest、`data.json` 或 ZIP 成员中。随后写入一条仅用于辨别时点的申请，停止服务并通过 `restore.cmd` 恢复该备份，确认时点后的申请消失、备份内核心实体/关联/时间线一致、active 指向新 generation，且 previous generation 保留供回退。
 
 ### E2E-02：重复申请与人工确认（M1 阻断）

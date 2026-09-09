@@ -332,7 +332,7 @@ PRAGMA busy_timeout = 5000;
 - 里程碑 1–2 是响应式网页，不依赖 Service Worker。
 - 里程碑 3 提供 Manifest、安装图标和严格版本化的静态应用壳缓存。
 - 从首次发布起固定使用 `http://127.0.0.1:3210`，以保证 M1 的 `EditorRecoveryDraft`，以及 M3 的 Service Worker、`OfflineCaptureDraft`、浏览器通知权限和 PWA 安装身份都属于同一 origin；端口冲突时失败提示，不迁移到新 origin。
-- M1 在固定 origin 的 IndexedDB 保存 `EditorRecoveryDraft`，只为长文本编辑器在崩溃、刷新或写入失败后恢复尚未正式保存的内容；正式保存或明确放弃后清除。它不是业务采集草稿，不进入完整备份。
+- M1 在固定 origin 的 IndexedDB 保存 `EditorRecoveryDraft`，只为长文本编辑器在崩溃、刷新或写入失败后恢复尚未正式保存的内容。记录按实体字段 scope 建索引，每个编辑器实例使用独立 `draftId` 和递增 `revision`；单份删除执行 revision 条件检查，正式保存只清理与持久化内容相同的候选，避免跨标签页误删。它不是业务采集草稿，不进入完整备份。
 - SQLite `capture_drafts` 中的 `CaptureDraft` 是经过服务端校验的正式本地采集草稿，属于当前 generation 并进入完整备份；规则解析和可选 AI 只能先生成这一类草稿，用户确认后才写正式实体。
 - M3 断连时才在 IndexedDB 保存 `OfflineCaptureDraft`，用于快速创建待确认输入；重连后展示差异并由用户确认转换成新的 `CaptureDraft` 或正式实体。它不进入完整备份，也不能与 SQLite 行共享 ID 或双写。
 - Service Worker 不缓存 JD、面经、附件响应或 API Key，也不缓存带敏感查询参数的响应。
