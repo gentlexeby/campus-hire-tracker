@@ -1,0 +1,39 @@
+# dependencies
+/node_modules/
+
+# Next.js build output
+/.next/
+/out/
+
+# test output
+/coverage/
+/playwright-report/
+/test-results/
+/.test-data/
+
+# local environment and diagnostics
+.env
+.env.local
+*.log
+npm-debug.log*
+
+# TypeScript
+*.tsbuildinfo
+
+# editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# project-local safety net: user data must live in LocalAppData
+/data/
+/stores/
+/backups/
+/runtime/
+/tmp/
+*.db
+*.db-shm
+*.db-wal
+*.chtrbak
+campus-hire-tracker-backup-*.zip

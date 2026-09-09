@@ -1,0 +1,47 @@
+{
+  "name": "campus-hire-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A local-first campus recruiting progress tracker.",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "cross-env NEXT_TELEMETRY_DISABLED=1 next dev -H 127.0.0.1 -p 3210",
+    "build": "cross-env NEXT_TELEMETRY_DISABLED=1 next build",
+    "start": "cross-env NEXT_TELEMETRY_DISABLED=1 next start -H 127.0.0.1 -p 3210",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium",
+    "db:generate": "drizzle-kit generate",
+    "db:check": "tsx scripts/db-check.ts",
+    "verify": "npm run lint && npm run typecheck && npm run test && npm run build"
+  },
+  "dependencies": {
+    "@libsql/client": "0.18.0",
+    "drizzle-orm": "0.45.2",
+    "fflate": "0.8.3",
+    "next": "16.3.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "cross-env": "10.1.0",
+    "drizzle-kit": "0.31.10",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.4",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "vite": "8.2.2",
+    "vitest": "5.0.0"
+  }
+}

@@ -1,0 +1,29 @@
+export type DuplicateApplicationSummary = {
+  companyName: string;
+  positionTitle: string;
+  cycleLabel: string | null;
+};
+
+export type EventConflictSummary = {
+  title: string;
+  type: string;
+  timezone: string | null;
+  schedule:
+    | { kind: "TIMED"; startsAtMs: number; endsAtMs: number | null }
+    | { kind: "ALL_DAY"; startDate: string; endDateExclusive: string };
+};
+
+export type SafeFormDetails =
+  | { kind: "DUPLICATE_APPLICATIONS"; matches: DuplicateApplicationSummary[] }
+  | { kind: "EVENT_CONFLICTS"; conflicts: EventConflictSummary[] };
+
+export type FormState = {
+  ok?: boolean;
+  code?: string;
+  message?: string;
+  details?: SafeFormDetails;
+  fieldErrors?: Record<string, string>;
+  values?: Record<string, string>;
+};
+
+export const initialFormState: FormState = {};
