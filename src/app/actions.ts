@@ -322,7 +322,8 @@ export async function restoreApplicationAction(_state: FormState, formData: Form
   redirect(`/applications/${applicationId}?restored=1`);
 }
 
-export async function createEventAction(_state: FormState, formData: FormData): Promise<FormState> {
+export async function createEventAction(previousState: FormState, formData: FormData): Promise<FormState> {
+  const formRevision = (previousState.formRevision ?? 0) + 1;
   const applicationId = text(formData, "applicationId");
   const isAllDay = text(formData, "isAllDay") === "true";
   let schedule: { kind: "ALL_DAY"; startDate: string; endDateExclusive: string } | { kind: "TIMED"; startsAtMs: number; endsAtMs?: number };
@@ -332,7 +333,7 @@ export async function createEventAction(_state: FormState, formData: FormData): 
     const startsAtMs = localDateTime(text(formData, "startsAt"));
     const rawEnd = text(formData, "endsAt");
     const endsAtMs = rawEnd ? localDateTime(rawEnd) : null;
-    if (startsAtMs == null || (rawEnd && endsAtMs == null)) return { code: "VALIDATION_ERROR", fieldErrors: startsAtMs == null ? { startsAt: "请填写有效开始时间" } : { endsAt: "结束时间无效" }, message: "请检查事件时间。", values: formValues(formData) };
+    if (startsAtMs == null || (rawEnd && endsAtMs == null)) return { code: "VALIDATION_ERROR", fieldErrors: startsAtMs == null ? { startsAt: "请填写有效开始时间" } : { endsAt: "结束时间无效" }, formRevision, message: "请检查事件时间。", values: formValues(formData) };
     schedule = { kind: "TIMED", startsAtMs, ...(endsAtMs != null ? { endsAtMs } : {}) };
   }
 
@@ -348,10 +349,10 @@ export async function createEventAction(_state: FormState, formData: FormData): 
       type: parseDomainInput(eventTypeSchema, text(formData, "type")),
     });
   } catch (error) {
-    return safeError(error, formData);
+    return { ...safeError(error, formData), formRevision };
   }
   refreshApplication(applicationId);
-  return { ok: true, message: "事件已创建。申请阶段不会自动改变。" };
+  return { ok: true, formRevision, message: "事件已创建。申请阶段不会自动改变。" };
 }
 
 export async function updateEventStatusAction(_state: FormState, formData: FormData): Promise<FormState> {

@@ -19,6 +19,8 @@ export type SafeFormDetails =
 
 export type FormState = {
   ok?: boolean;
+  /** Advances when a form needs a fresh client-side control state after submission. */
+  formRevision?: number;
   code?: string;
   message?: string;
   details?: SafeFormDetails;

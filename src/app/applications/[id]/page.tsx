@@ -18,6 +18,7 @@ import {
   RestoreForm,
   StageForm,
 } from "@/components/forms";
+import { IcsExport } from "@/components/ics-export";
 import { Section, StatusPill } from "@/components/ui";
 import { RecoverableNotesEditor } from "@/components/recoverable-notes-editor";
 import {
@@ -31,6 +32,7 @@ import {
   updateEventStatusAction,
 } from "@/app/actions";
 import { toApplicationView, toEventView, toTimelineView } from "@/app/view-models";
+import { buildIcsPreview, buildIcsSnapshotId } from "@/lib/ics";
 import { getApplicationDetail } from "@/lib/services";
 
 type PageProps = {
@@ -119,13 +121,36 @@ export default async function ApplicationDetailPage({ params, searchParams }: Pa
           <Section id="events" title="事件" description="面试、笔试、截止和复查都在同一日程中；事件完成不会改变主阶段。">
             {application.events.length ? (
               <div className="event-list detail-event-list">
-                {application.events.map((event) => (
-                  <EventRow
-                    event={toEventView(event)}
-                    key={event.id}
-                    actions={<><EventStatusForm action={updateEventStatusAction} available={event.status === "SCHEDULED"} eventId={event.id} expectedVersion={event.version} label={event.type === "ACTION_DUE" || event.type === "FOLLOW_UP" ? "完成并待补下一步" : "标记完成"} status="COMPLETED" /><EventStatusForm action={updateEventStatusAction} available={event.status === "SCHEDULED"} eventId={event.id} expectedVersion={event.version} label={event.type === "ACTION_DUE" || event.type === "FOLLOW_UP" ? "取消并待补下一步" : "取消事件"} status="CANCELLED" /></>}
-                  />
-                ))}
+                {application.events.map((event) => {
+                  const exportInput = {
+                    event,
+                    companyName: application.companyName,
+                    positionTitle: application.positionTitle,
+                    ...(event.status === "COMPLETED" ? { reminderMinutes: [] } : {}),
+                  };
+                  const preview = buildIcsPreview(exportInput);
+                  return (
+                    <EventRow
+                      event={toEventView(event)}
+                      key={event.id}
+                      actions={<>
+                        {isArchived || event.status === "CANCELLED" ? (
+                          <span className="muted compact">{isArchived ? "归档申请不导出" : "已取消，不导出"}</span>
+                        ) : (
+                          <IcsExport
+                            href={`/api/calendar-export?scope=event&eventId=${encodeURIComponent(event.id)}&snapshot=${buildIcsSnapshotId([exportInput])}`}
+                            items={[preview]}
+                            label="导出此事件"
+                            presentation="popover"
+                            scopeDescription={event.status === "COMPLETED" ? "只导出此事件。事件已完成，因此不会写入提醒。" : "只导出此事件，并写入下方预览的默认提醒。"}
+                          />
+                        )}
+                        <EventStatusForm action={updateEventStatusAction} available={event.status === "SCHEDULED"} eventId={event.id} expectedVersion={event.version} label={event.type === "ACTION_DUE" || event.type === "FOLLOW_UP" ? "完成并待补下一步" : "标记完成"} status="COMPLETED" />
+                        <EventStatusForm action={updateEventStatusAction} available={event.status === "SCHEDULED"} eventId={event.id} expectedVersion={event.version} label={event.type === "ACTION_DUE" || event.type === "FOLLOW_UP" ? "取消并待补下一步" : "取消事件"} status="CANCELLED" />
+                      </>}
+                    />
+                  );
+                })}
               </div>
             ) : <p className="muted">还没有事件。</p>}
             {!isArchived ? <details className="form-details event-create-details"><summary>＋ 为这条申请新建事件</summary><div className="details-grid"><EventForm action={createEventAction} applications={[{ id: application.id, companyName: application.companyName, positionTitle: application.positionTitle }]} defaultApplicationId={application.id} /></div></details> : null}

@@ -1056,6 +1056,19 @@ export async function updateApplication(
         .where(eq(positions.id, position.id));
     }
 
+    if (data.companyName !== undefined || data.positionTitle !== undefined) {
+      await tx
+        .update(events)
+        .set({ updatedAtMs: now, version: sql`${events.version} + 1` })
+        .where(
+          and(
+            eq(events.workspaceId, workspaceId),
+            eq(events.applicationId, id),
+            isNull(events.deletedAtMs),
+          ),
+        );
+    }
+
     const sourceKind = data.sourceKind ?? (application.sourceKind as ApplicationSource);
     const sourceDetail =
       sourceKind === "CUSTOM"
@@ -1600,6 +1613,19 @@ export async function listCalendarEvents(options: CalendarEventsOptions = {}): P
       return (options.fromMs === undefined || end >= options.fromMs) && (options.toMs === undefined || start < options.toMs);
     })
     .sort((a, b) => eventSortValue(a) - eventSortValue(b));
+}
+
+export async function listFutureCalendarEvents(): Promise<{
+  capturedAtMs: number;
+  events: EventDto[];
+}> {
+  const capturedAtMs = Date.now();
+  const futureEvents = await listCalendarEvents({
+    fromMs: capturedAtMs,
+    includeArchived: false,
+    status: "SCHEDULED",
+  });
+  return { capturedAtMs, events: futureEvents };
 }
 
 export async function getTodayDashboard(options: { now?: number } = {}): Promise<DashboardData> {

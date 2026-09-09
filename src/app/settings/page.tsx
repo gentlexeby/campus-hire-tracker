@@ -31,11 +31,15 @@ export default async function SettingsPage() {
         </Section>
 
         <Section title="当前可用" description="这是一条精简但完整的本地推进闭环。">
-          <ul className="plain-list"><li>申请、阶段和三种推进状态</li><li>面试、笔试、截止与复查事件</li><li>带浏览器临时草稿恢复的申请备注</li><li>今日风险队列、看板 / 表格和日程列表</li><li>不可直接编辑的申请时间线</li></ul>
+          <ul className="plain-list"><li>申请、阶段和三种推进状态</li><li>面试、笔试、截止与复查事件</li><li>带浏览器临时草稿恢复的申请备注</li><li>今日风险队列、看板 / 表格和日程列表</li><li>单个事件、当前列表与全部未来事件的 ICS 导出</li><li>不可直接编辑的申请时间线</li></ul>
         </Section>
 
         <Section title="后续提供" description="下列能力尚未开启，界面不会暗示它们已经可用。">
-          <ul className="plain-list muted"><li>附件、JD 与面经资料库</li><li>表格导入、完整备份与恢复脚本</li><li>ICS 日历导出、PWA、通知与 AI</li><li>浏览器草稿不是离线正式编辑或跨设备同步</li></ul>
+          <ul className="plain-list muted"><li>附件、JD 与面经资料库</li><li>表格导入、完整备份与恢复脚本</li><li>PWA、浏览器通知与 AI</li><li>浏览器草稿不是离线正式编辑或跨设备同步</li></ul>
+        </Section>
+
+        <Section title="系统日历边界" description="ICS 是可下载的日历快照，而不是双向同步。">
+          <ul className="plain-list"><li>导出前可核对数量、日期范围与每个事件字段</li><li>默认不包含普通备注等敏感正文</li><li>系统日历中的修改不会回写到秋招进度板</li><li>应用关闭后的实际提醒由导入文件的系统日历负责</li></ul>
         </Section>
       </div>
     </>

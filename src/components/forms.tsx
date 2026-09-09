@@ -265,19 +265,21 @@ export function RestoreForm({ action, applicationId, suggestedStage = "OPPORTUNI
   );
 }
 
-export function EventForm({ action, applications, defaultApplicationId }: { action: FormAction; applications: Array<{ id: string; companyName: string; positionTitle: string }>; defaultApplicationId?: string }) {
-  const [state, formAction] = useActionState(action, initialFormState);
+type EventFormProps = { action: FormAction; applications: Array<{ id: string; companyName: string; positionTitle: string }>; defaultApplicationId?: string };
+
+function EventFormBody({ state, formAction, applications, defaultApplicationId }: Omit<EventFormProps, "action"> & { state: FormState; formAction: (payload: FormData) => void }) {
   const [allDay, setAllDay] = useState(value(state, "isAllDay") === "true");
   const conflictWarning = state.code === "EVENT_CONFLICT_CONFIRMATION_REQUIRED" || state.code === "EVENT_CONFLICT" || state.code === "CONFLICT_WARNING";
   const canConfirmConflict = state.details?.kind === "EVENT_CONFLICTS" && state.details.conflicts.length > 0;
   return (
     <form action={formAction} className="stack-form compact-form">
       <FormMessage state={state} />
+      <input name="isAllDay" type="hidden" value={allDay ? "true" : "false"} />
       <div className="form-grid">
         <Field label="事件类型" required error={state.fieldErrors?.type}><select className="select" defaultValue={value(state, "type", "INTERVIEW")} name="type">{eventTypes.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select></Field>
         <Field label="关联申请" required error={state.fieldErrors?.applicationId}><select className="select" defaultValue={value(state, "applicationId", defaultApplicationId ?? "")} name="applicationId" required><option disabled value="">请选择申请</option>{applications.map((item) => <option key={item.id} value={item.id}>{item.companyName} · {item.positionTitle}</option>)}</select></Field>
         <Field label="标题" required error={state.fieldErrors?.title}><input className="input" defaultValue={value(state, "title")} maxLength={200} name="title" placeholder="例如：技术一面" required /></Field>
-        <label className="checkbox-field"><input checked={allDay} name="isAllDay" onChange={(event) => setAllDay(event.target.checked)} type="checkbox" value="true" /><span>这是全天事件</span></label>
+        <label className="checkbox-field"><input checked={allDay} onChange={(event) => setAllDay(event.target.checked)} type="checkbox" /><span>这是全天事件</span></label>
         {allDay ? <><Field label="开始日期" required error={state.fieldErrors?.startDate}><input className="input" defaultValue={value(state, "startDate")} name="startDate" required type="date" /></Field><Field label="结束日期（不含）" required hint="单日事件请选择下一天" error={state.fieldErrors?.endDateExclusive}><input className="input" defaultValue={value(state, "endDateExclusive")} name="endDateExclusive" required type="date" /></Field></> : <><Field label="开始时间" required error={state.fieldErrors?.startsAt}><input className="input" defaultValue={value(state, "startsAt")} name="startsAt" required type="datetime-local" /></Field><Field label="结束时间" hint="可选；留空表示时间点" error={state.fieldErrors?.endsAt}><input className="input" defaultValue={value(state, "endsAt")} name="endsAt" type="datetime-local" /></Field></>}
         <Field label="地点" error={state.fieldErrors?.location}><input className="input" defaultValue={value(state, "location")} maxLength={200} name="location" /></Field>
         <Field label="会议链接" error={state.fieldErrors?.meetingUrl}><input className="input" defaultValue={value(state, "meetingUrl")} maxLength={2048} name="meetingUrl" type="url" /></Field>
@@ -289,6 +291,11 @@ export function EventForm({ action, applications, defaultApplicationId }: { acti
       <div className="form-actions">{!conflictWarning || canConfirmConflict ? <SubmitButton>{conflictWarning ? "确认保存事件" : "创建事件"}</SubmitButton> : null}</div>
     </form>
   );
+}
+
+export function EventForm({ action, applications, defaultApplicationId }: EventFormProps) {
+  const [state, formAction] = useActionState(action, initialFormState);
+  return <EventFormBody key={state.formRevision ?? 0} state={state} formAction={formAction} applications={applications} defaultApplicationId={defaultApplicationId} />;
 }
 
 export function EventStatusForm({ action, available = true, eventId, expectedVersion, status, label, tone = "" }: { action: FormAction; available?: boolean; eventId: string; expectedVersion?: number; status: "COMPLETED" | "CANCELLED" | "SCHEDULED"; label: string; tone?: string }) {

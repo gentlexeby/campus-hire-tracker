@@ -341,4 +341,27 @@ describe("local data store", () => {
 
     expect((await getApplicationDetail(application.id))?.notesMarkdown).toBe(notesMarkdown);
   });
+
+  it("increments event versions when an application label used by ICS changes", async () => {
+    const application = await createApplication({ companyName: "旧公司", positionTitle: "旧岗位" });
+    const createdEvent = await createEvent({
+      applicationId: application.id,
+      type: "INTERVIEW",
+      title: "技术面试",
+      schedule: { kind: "TIMED", startsAtMs: Date.now() + 3_600_000 },
+    });
+    const beforeUpdate = await getApplicationDetail(application.id);
+
+    const updated = await updateApplication(application.id, {
+      companyName: "新公司",
+      positionTitle: "新岗位",
+      expectedVersion: beforeUpdate!.version,
+    });
+
+    expect(updated.companyName).toBe("新公司");
+    expect(updated.positionTitle).toBe("新岗位");
+    expect(updated.events.find((event) => event.id === createdEvent.id)?.version).toBe(
+      createdEvent.version + 1,
+    );
+  });
 });
