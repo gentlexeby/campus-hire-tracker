@@ -10,6 +10,8 @@
 /playwright-report/
 /test-results/
 /.test-data/
+/.playwright-cli/
+/output/playwright/
 
 # local environment and diagnostics
 .env*

@@ -21,11 +21,13 @@ import {
 import { IcsExport } from "@/components/ics-export";
 import { Section, StatusPill } from "@/components/ui";
 import { RecoverableNotesEditor } from "@/components/recoverable-notes-editor";
+import { ResumeLinkForm } from "@/components/resume-link-form";
 import {
   archiveApplicationAction,
   createEventAction,
   restoreApplicationAction,
   setAttentionAction,
+  setApplicationResumeVersionAction,
   setStageAction,
   updateApplicationAction,
   updateApplicationNotesAction,
@@ -33,7 +35,7 @@ import {
 } from "@/app/actions";
 import { toApplicationView, toEventView, toTimelineView } from "@/app/view-models";
 import { buildIcsPreview, buildIcsSnapshotId } from "@/lib/ics";
-import { getApplicationDetail } from "@/lib/services";
+import { getApplicationDetail, listResumeVersionChoices } from "@/lib/services";
 
 type PageProps = {
   params: Promise<{ id: string }>;
@@ -65,7 +67,10 @@ export const dynamic = "force-dynamic";
 
 export default async function ApplicationDetailPage({ params, searchParams }: PageProps) {
   const [{ id }, query] = await Promise.all([params, searchParams]);
-  const application = await getApplicationDetail(id);
+  const [application, resumeChoices] = await Promise.all([
+    getApplicationDetail(id),
+    listResumeVersionChoices(),
+  ]);
   if (!application) notFound();
   const view = toApplicationView(application);
   const isArchived = application.stage === "ARCHIVED";
@@ -170,8 +175,23 @@ export default async function ApplicationDetailPage({ params, searchParams }: Pa
             )}
           </Section>
 
-          <Section id="materials" title="资料" description="JD、面经和附件将在下一阶段提供。">
-            <div className="coming-soon"><span>M2</span><p>当前版本聚焦申请推进与日程；资料内容暂不提供编辑入口，也不会显示虚假的已实现能力。</p></div>
+          <Section id="materials" title="投递简历" description="关联当时实际使用的 PDF 版本；之后上传新版本不会静默改掉这条记录。">
+            <ResumeLinkForm
+              action={setApplicationResumeVersionAction}
+              applicationId={application.id}
+              choices={resumeChoices
+                .filter((choice) => !choice.archived || choice.id === application.resumeVersionId)
+                .map((choice) => ({
+                  id: choice.id,
+                  resumeId: choice.resumeId,
+                  label: `${choice.resumeName} · V${choice.versionNumber}`,
+                  pdfOriginalName: choice.pdfOriginalName,
+                  archived: choice.archived,
+                }))}
+              currentVersionId={application.resumeVersionId}
+              disabled={isArchived}
+              expectedVersion={application.version}
+            />
           </Section>
 
           <Section id="timeline" title="时间线" description="事实按时间倒序记录，不直接编辑或删除。">

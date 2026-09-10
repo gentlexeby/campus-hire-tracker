@@ -41,6 +41,9 @@ export const M1_EVENT_TYPES = EVENT_TYPES.filter(
   (type) => type !== "RECRUITMENT_FAIR",
 ) as Exclude<(typeof EVENT_TYPES)[number], "RECRUITMENT_FAIR">[];
 export const EVENT_STATUSES = ["SCHEDULED", "COMPLETED", "CANCELLED"] as const;
+export const RESUME_SOURCE_DOCX_MIME_TYPE =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+export const RESUME_DELIVERY_PDF_MIME_TYPE = "application/pdf";
 
 export const applicationStageSchema = z.enum(APPLICATION_STAGES);
 export const activeApplicationStageSchema = z.enum(ACTIVE_APPLICATION_STAGES);
@@ -55,12 +58,111 @@ export const eventStatusSchema = z.enum(EVENT_STATUSES);
 const requiredText = (label: string, max: number) =>
   z.string().trim().min(1, `${label}不能为空`).max(max, `${label}不能超过 ${max} 个字符`);
 const optionalText = (max: number) => z.string().trim().max(max).nullable().optional();
+const optionalResumeText = (max: number) =>
+  optionalText(max).transform((value) => (value === "" ? null : value));
 const optionalMarkdown = (max: number) =>
   z.string().max(max, `内容不能超过 ${max} 个字符`).nullable().optional();
 const optionalUrl = z
   .union([z.url({ protocol: /^https?$/ }), z.literal(""), z.null()])
   .optional()
   .transform((value) => (value ? value : null));
+
+const safeInternalRelativePath = (label: string, extension: ".docx" | ".pdf") =>
+  z
+    .string()
+    .min(1, `${label}不能为空`)
+    .max(1_024, `${label}不能超过 1024 个字符`)
+    .regex(
+      /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/,
+      `${label}必须是受控内部相对路径`,
+    )
+    .refine((value) => value.endsWith(extension), `${label}必须以 ${extension} 结尾`);
+
+const resumeFileMetadataSchema = (
+  label: string,
+  extension: ".docx" | ".pdf",
+  mimeType: string,
+) =>
+  z
+    .object({
+      originalName: requiredText(`${label}原始文件名`, 255).refine(
+        (value) => value.toLocaleLowerCase("en-US").endsWith(extension),
+        `${label}原始文件名必须以 ${extension} 结尾`,
+      ),
+      relativePath: safeInternalRelativePath(`${label}内部路径`, extension),
+      mimeType: z.literal(mimeType),
+      sizeBytes: z
+        .number()
+        .int(`${label}字节数必须为整数`)
+        .positive(`${label}字节数必须大于 0`)
+        .max(Number.MAX_SAFE_INTEGER, `${label}字节数超出安全范围`),
+      sha256: z.string().regex(/^[0-9a-f]{64}$/, `${label} SHA-256 格式无效`),
+    })
+    .strict();
+
+export const resumeSourceDocxSchema = resumeFileMetadataSchema(
+  "DOCX 源文件",
+  ".docx",
+  RESUME_SOURCE_DOCX_MIME_TYPE,
+);
+export const resumeDeliveryPdfSchema = resumeFileMetadataSchema(
+  "PDF 投递文件",
+  ".pdf",
+  RESUME_DELIVERY_PDF_MIME_TYPE,
+);
+
+export const createResumeInputSchema = z
+  .object({
+    name: requiredText("简历名称", 200),
+    targetDirection: optionalResumeText(200),
+    language: optionalResumeText(80),
+  })
+  .strict();
+
+export const updateResumeInputSchema = z
+  .object({
+    name: requiredText("简历名称", 200).optional(),
+    targetDirection: optionalResumeText(200),
+    language: optionalResumeText(80),
+    expectedVersion: z.number().int().positive().optional(),
+  })
+  .strict();
+
+export const createResumeVersionInputSchema = z
+  .object({
+    resumeId: z.uuid(),
+    sourceDocx: resumeSourceDocxSchema.nullable().optional(),
+    deliveryPdf: resumeDeliveryPdfSchema.nullable().optional(),
+    changeSummary: optionalResumeText(1_000),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.sourceDocx == null && value.deliveryPdf == null) {
+      context.addIssue({
+        code: "custom",
+        path: ["sourceDocx"],
+        message: "简历版本至少需要 DOCX 源文件或 PDF 投递文件之一",
+      });
+    }
+  });
+
+export const setApplicationResumeVersionInputSchema = z
+  .object({
+    resumeVersionId: z.uuid().nullable(),
+    expectedVersion: z.number().int().positive().optional(),
+  })
+  .strict();
+
+export function assertResumeVersionCanBeSubmitted(version: {
+  deliveryPdf?: unknown;
+}): asserts version is { deliveryPdf: z.infer<typeof resumeDeliveryPdfSchema> } {
+  const result = resumeDeliveryPdfSchema.safeParse(version.deliveryPdf);
+  if (result.success) return;
+  throw new DomainError(
+    "RESUME_VERSION_NOT_DELIVERABLE",
+    "只有包含完整 PDF 投递文件的简历版本才能关联到岗位申请",
+  );
+}
 
 const isoDateSchema = z
   .string()
@@ -263,6 +365,14 @@ export type RestoreApplicationInput = z.input<typeof restoreApplicationInputSche
 export type CreateEventInput = z.input<typeof createEventInputSchema>;
 export type UpdateEventInput = z.input<typeof updateEventInputSchema>;
 export type UpdateEventStatusInput = z.input<typeof updateEventStatusInputSchema>;
+export type ResumeSourceDocx = z.infer<typeof resumeSourceDocxSchema>;
+export type ResumeDeliveryPdf = z.infer<typeof resumeDeliveryPdfSchema>;
+export type CreateResumeInput = z.input<typeof createResumeInputSchema>;
+export type UpdateResumeInput = z.input<typeof updateResumeInputSchema>;
+export type CreateResumeVersionInput = z.input<typeof createResumeVersionInputSchema>;
+export type SetApplicationResumeVersionInput = z.input<
+  typeof setApplicationResumeVersionInputSchema
+>;
 
 export function normalizeLookupText(value: string): string {
   return value.trim().replace(/\s+/g, " ").normalize("NFKC").toLocaleLowerCase("zh-CN");

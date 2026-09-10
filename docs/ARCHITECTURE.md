@@ -2,6 +2,7 @@
 
 > 文档状态：已确认，可进入实现
 > 适用范围：Windows 本地单用户版本
+> 当前开发切片：`codex/resume-library-mvp`；未标为“已实现”的 M2/M3 内容均是长期候选架构
 > 关联决策：[ADR-0001 本地优先](adr/0001-local-first.md) · [ADR-0002 数据置于仓库外](adr/0002-user-data-outside-repo.md) · [ADR-0003 Web 技术栈](adr/0003-web-stack.md)
 
 ## 1. 架构目标与边界
@@ -15,6 +16,29 @@
 5. 客户端、数据库、文件和外部网络之间有清楚的安全边界。
 
 首版是本地应用，不是部署在公网的 SaaS。每个克隆在当前 Windows 账户下使用一个独立工作区；不包含登录、远程管理、云同步或多租户授权。
+
+### 1.1 当前简历切片的实际边界
+
+本次实现刻意保持为一个适合学习的垂直切片，不引入新的进程、服务、账号或外部 API：
+
+```mermaid
+flowchart LR
+    UI["简历/申请页面"] --> RH["同源 Route Handler / Server Action"]
+    RH --> V["Zod + 文件类型校验"]
+    V --> FS["本机 attachments/<uuid>.pdf|docx"]
+    RH --> SV["领域服务 + Drizzle 事务"]
+    SV --> DB["schema v2: resumes / resume_versions / applications"]
+    DB --> DL["受控预览或下载"]
+    FS --> DL
+```
+
+- 页面负责收集简历名称、可选说明和文件；不解析或编辑简历正文。
+- 上传端点限制每个文件 10 MiB，检查扩展名、MIME 和基本内容结构，以随机对象名写入当前数据 generation。
+- 服务层原子创建简历与首版、追加版本，以及选择/移除岗位申请的投递版本；后者同时写时间线。
+- 只有带 PDF 的未归档版本可建立新的岗位关联。PDF 使用 `inline` 响应，DOCX 使用 `attachment` 响应；读取时校验大小、类型和 SHA-256。
+- schema v1 → v2 是本切片唯一迁移。自动备份、恢复、文件 GC、通用附件协议、简历编辑器和 AI 优化均未随本切片实现。
+
+这段是当前代码的架构事实；后文关于完整备份、PWA、AI、通用资料库和维护 helper 的内容是演进方向，不应用来扩大当前版本范围。
 
 ## 2. 系统上下文
 
@@ -170,6 +194,7 @@ flowchart TB
 | 模块 | 职责 | 不负责 |
 | --- | --- | --- |
 | `applications` | 公司、岗位、申请、阶段、优先级、来源、标签、下一步/等待 | 通用任务清单、自动推进阶段 |
+| `resumes` | 简历序列、不可变 DOCX/PDF 版本、岗位所用版本关联 | 简历排版、正文编辑、模板市场、AI 优化 |
 | `agenda` | 事件、提醒、冲突、今日聚合、日历查询 | 修改申请阶段 |
 | `interviews` | 自由命名轮次、结果、面试官、复盘关联 | 根据结果自动归档 |
 | `fairs` | 招聘会、目标公司/岗位、来源关联、会后行动 | 抓取全国招聘会信息 |
@@ -228,6 +253,8 @@ PRAGMA busy_timeout = 5000;
 数据表、字段、关系和索引详见 [DATA_MODEL.md](DATA_MODEL.md)。
 
 ## 8. 文件存储
+
+简历版本与未来的通用资料附件共用当前 generation 的 `attachments` 根目录，但使用独立的受控 API 和数据库元数据。以下 8.1 描述长期通用附件目标；简历 MVP 当前采用本节 8.0 的最小实现：文件先在内存完成 10 MiB 上限和类型校验，再以 `writeFile(..., { flag: "wx", flush: true })` 写入随机 UUID 文件名。数据库登记失败时请求会尝试删除本次已写文件；当前没有后台孤儿清理或 GC。
 
 ### 8.1 附件写入
 
@@ -389,11 +416,12 @@ interface ExtractionProvider {
 | Domain/Vitest | 状态转换、行动三态、归档、时间区间、脱敏、重复提示 |
 | Application/Vitest | 事务原子性、时间线、撤销、幂等、乐观并发 |
 | Infrastructure/Vitest | Drizzle 仓储、外键、候选 generation 迁移、FTS 重建、不可变附件、file_gc_jobs、文件路径和哈希 |
+| 简历切片/Vitest | schema v1 → v2、版本递增、归档边界、PDF 投递关联、10 MiB/类型校验、读回哈希 |
 | Security fixtures | ZIP Slip、伪造 MIME、公式注入、恶意 Markdown、日志脱敏 |
-| Playwright | 创建申请、今日、看板拖动/撤销、事件冲突、备份恢复 |
+| Playwright | 创建申请、今日、看板拖动/撤销、事件冲突；简历分支另覆盖创建版本、预览/下载入口和岗位关联 |
 | Windows smoke | clone → setup → start → update → backup → restore；在 PREPARED、指针替换后和 ACTIVATED 三处注入崩溃并验证完成/回退 |
 
-每个里程碑必须保持可启动、可迁移、可备份。任何会改变数据格式的发布，在合并前至少验证当前 schema、上一个受支持 schema、损坏备份和迁移中断四类夹具。
+每个里程碑必须保持可启动、可迁移。自动备份尚未实现时，README 必须明确要求先停止应用并复制整个数据目录，不能宣称已有正式恢复能力。任何会改变数据格式的发布，在合并前至少验证当前 schema 与上一个受支持 schema；损坏备份和备份恢复夹具从正式备份功能开始成为门禁。
 
 ## 16. 官方技术依据
 

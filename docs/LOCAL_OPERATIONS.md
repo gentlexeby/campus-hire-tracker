@@ -6,15 +6,17 @@
 
 首版不需要管理员权限、Docker、数据库服务、云账号或邮件服务。应用是本地 Node.js Web 服务，固定使用 `http://127.0.0.1:3210`，数据保存在仓库外。
 
+> 当前实现状态以根目录 README 为准。`update.cmd`、`restore.cmd`、正式 ZIP 备份、通用附件 staging/GC 和不可变 release 切换仍是后续目标，不应因为本页定义了契约就宣称已经可用。`codex/resume-library-mvp` 当前只新增本机简历版本文件和 schema v1 → v2 前向迁移。
+
 ## 2. 前置条件
 
 - Windows 11；若发布说明明确验证过，可支持 Windows 10。
 - Git。
 - Node.js 24 LTS，包含 npm。
 - 当前维护版 Edge 或 Chrome。
-- 能访问 GitHub 私有仓库及 npm 包来源，仅用于克隆、安装和更新。
+- 能访问 GitHub 公开仓库及 npm 包来源，仅用于克隆、安装和更新。
 
-用户不应从来历不明的 ZIP、网盘镜像或别人打包的 `node_modules` 运行。首次安装和更新都应从受邀的 GitHub 仓库及明确发布标签开始。
+用户不应从来历不明的 ZIP、网盘镜像或别人打包的 `node_modules` 运行。首次安装和更新都应从项目的 GitHub 公开仓库及明确分支/发布标签开始。
 
 ## 3. 仓库与用户数据分离
 
@@ -74,6 +76,8 @@ D:\Projects\campus-hire-tracker
 附件写入的操作契约固定为：用户数据根同卷 `tmp\uploads\<operation-id>` 流式写入 → 对打开句柄 flush 并执行 `fsync`/`FlushFileBuffers` → 关闭句柄 → 校验大小、SHA-256、扩展名、MIME 与内容签名 → 生成已含规范小写扩展名的完整 `object_key` → no-replace 原子移动到活动 generation 的 `stores\<generation-id>\attachments\<object_key>` → 短数据库事务登记元数据和关联。目标已存在时换新对象键，绝不覆盖；任何步骤都不得再次追加扩展名，数据库提交前不得报告成功。
 
 默认限制为：单文件 `50 MiB`、单批 `20` 个、当前受管附件总量 `2 GiB`、图片解码 `40 MP`、PDF `500` 页。上传前后都要检查可提前判断的预算，超限时保持既有对象和数据库不变。
+
+上述是未来通用资料附件的目标预算。当前简历版本上传只接受 PDF/DOCX，单文件上限为 10 MiB；实现会把文件读入内存校验后，用 `wx` 和随机 UUID 文件名直接写入当前 generation 的 `attachments` 目录，不包含本节描述的后台 staging/GC 流程。
 
 启动维护 helper 在取得维护锁后执行确定性清理：过宽限期的未完成 `tmp\uploads` 可删除；已经原子移动但没有任何数据库引用、也没有未完成操作记录的对象，进入持久化 `file_gc_jobs` 队列；有数据库引用但文件缺失只报告完整性错误。永久删除业务记录时，删除关系和写 `file_gc_jobs` 必须在同一数据库事务内完成。worker 在事务提交后，以任务中的 `generation_id + object_key` 唯一定位 `stores\<generation_id>\attachments\<object_key>`，复核规范化根路径和预期哈希后幂等删除并标记任务；它不拼扩展名，也不靠 active 指针猜位置。崩溃或访问失败时保留任务重试；完整备份的 maintenance gate 持有期间 worker 必须暂停。
 

@@ -35,6 +35,15 @@ export function ApplicationsIcon(props: IconProps) {
   );
 }
 
+export function ResumeIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M7 3h7l4 4v14H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
+      <path d="M14 3v5h5M9 12h6M9 16h6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
+    </IconBase>
+  );
+}
+
 export function CalendarIcon(props: IconProps) {
   return (
     <IconBase {...props}>

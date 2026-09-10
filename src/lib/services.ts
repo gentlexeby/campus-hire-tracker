@@ -5,6 +5,7 @@ import {
   desc,
   eq,
   inArray,
+  isNotNull,
   isNull,
   like,
   ne,
@@ -18,6 +19,8 @@ import {
   archiveApplicationInputSchema,
   createApplicationInputSchema,
   createEventInputSchema,
+  createResumeInputSchema,
+  createResumeVersionInputSchema,
   defaultTimezone,
   DomainError,
   normalizeLookupText,
@@ -25,6 +28,7 @@ import {
   normalizeOptionalText,
   parseDomainInput,
   restoreApplicationInputSchema,
+  setApplicationResumeVersionInputSchema,
   updateApplicationInputSchema,
   updateEventInputSchema,
   updateEventStatusInputSchema,
@@ -37,11 +41,15 @@ import {
   type AttentionMode,
   type CreateApplicationInput,
   type CreateEventInput,
+  type CreateResumeInput,
+  type CreateResumeVersionInput,
   type EventScheduleInput,
   type EventStatus,
   type EventType,
   type Priority,
   type RestoreApplicationInput,
+  type ResumeDeliveryPdf,
+  type ResumeSourceDocx,
   type UpdateApplicationInput,
   type UpdateEventInput,
   type UpdateEventStatusInput,
@@ -58,12 +66,16 @@ import {
   companies,
   events,
   positions,
+  resumes,
+  resumeVersions,
   tags,
   timelineEntries,
   workspaces,
   workspaceSettings,
   type ApplicationRow,
   type EventRow,
+  type ResumeRow,
+  type ResumeVersionRow,
 } from "@/lib/db/schema";
 
 export * from "@/lib/domain";
@@ -149,9 +161,59 @@ export interface ApplicationDetail extends ApplicationSummary {
   archivedFromStage: ActiveApplicationStage | null;
   archiveReason: ArchiveReason | null;
   archiveNote: string | null;
+  resumeVersionId: string | null;
   events: EventDto[];
   timeline: TimelineEntryDto[];
 }
+
+export interface ResumeFileDto {
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+}
+
+export interface ResumeVersionDto {
+  id: string;
+  resumeId: string;
+  versionNumber: number;
+  sourceDocx: ResumeFileDto | null;
+  deliveryPdf: ResumeFileDto | null;
+  changeSummary: string | null;
+  createdAtMs: number;
+}
+
+export interface ResumeSummary {
+  id: string;
+  name: string;
+  targetDirection: string | null;
+  language: string | null;
+  archivedAtMs: number | null;
+  createdAtMs: number;
+  updatedAtMs: number;
+  version: number;
+  latestVersion: ResumeVersionDto | null;
+}
+
+export interface ResumeDetail extends ResumeSummary {
+  versions: ResumeVersionDto[];
+}
+
+export interface ResumeVersionChoice {
+  id: string;
+  resumeId: string;
+  resumeName: string;
+  versionNumber: number;
+  pdfOriginalName: string;
+  createdAtMs: number;
+  archived: boolean;
+}
+
+export interface StoredResumeFileRecord extends ResumeFileDto {
+  relativePath: string;
+}
+
+export type ResumeVersionUploadMetadata = Omit<CreateResumeVersionInput, "resumeId">;
 
 export interface ListApplicationsOptions {
   includeArchived?: boolean;
@@ -282,6 +344,95 @@ function eventDto(row: EventRow): EventDto {
     updatedAtMs: row.updatedAtMs,
     version: row.version,
   };
+}
+
+function optionalResumeFile(
+  originalName: string | null,
+  mimeType: string | null,
+  sizeBytes: number | null,
+  sha256: string | null,
+): ResumeFileDto | null {
+  if (!originalName || !mimeType || sizeBytes == null || !sha256) return null;
+  return { originalName, mimeType, sizeBytes, sha256 };
+}
+
+function resumeVersionDto(row: ResumeVersionRow): ResumeVersionDto {
+  return {
+    id: row.id,
+    resumeId: row.resumeId,
+    versionNumber: row.versionNumber,
+    sourceDocx: optionalResumeFile(
+      row.sourceDocxOriginalName,
+      row.sourceDocxMimeType,
+      row.sourceDocxSizeBytes,
+      row.sourceDocxSha256,
+    ),
+    deliveryPdf: optionalResumeFile(
+      row.deliveryPdfOriginalName,
+      row.deliveryPdfMimeType,
+      row.deliveryPdfSizeBytes,
+      row.deliveryPdfSha256,
+    ),
+    changeSummary: row.changeSummary,
+    createdAtMs: row.createdAtMs,
+  };
+}
+
+function resumeFileColumns(
+  sourceDocx: ResumeSourceDocx | null | undefined,
+  deliveryPdf: ResumeDeliveryPdf | null | undefined,
+) {
+  return {
+    sourceDocxOriginalName: sourceDocx?.originalName ?? null,
+    sourceDocxRelativePath: sourceDocx?.relativePath ?? null,
+    sourceDocxMimeType: sourceDocx?.mimeType ?? null,
+    sourceDocxSizeBytes: sourceDocx?.sizeBytes ?? null,
+    sourceDocxSha256: sourceDocx?.sha256 ?? null,
+    deliveryPdfOriginalName: deliveryPdf?.originalName ?? null,
+    deliveryPdfRelativePath: deliveryPdf?.relativePath ?? null,
+    deliveryPdfMimeType: deliveryPdf?.mimeType ?? null,
+    deliveryPdfSizeBytes: deliveryPdf?.sizeBytes ?? null,
+    deliveryPdfSha256: deliveryPdf?.sha256 ?? null,
+  };
+}
+
+function resumeSummaryDto(row: ResumeRow, latestVersion: ResumeVersionDto | null): ResumeSummary {
+  return {
+    id: row.id,
+    name: row.name,
+    targetDirection: row.targetDirection,
+    language: row.language,
+    archivedAtMs: row.archivedAtMs,
+    createdAtMs: row.createdAtMs,
+    updatedAtMs: row.updatedAtMs,
+    version: row.version,
+    latestVersion,
+  };
+}
+
+async function versionsByResumeIds(
+  db: AppDatabase,
+  workspaceId: string,
+  resumeIds: string[],
+): Promise<Map<string, ResumeVersionDto[]>> {
+  const grouped = new Map<string, ResumeVersionDto[]>();
+  if (resumeIds.length === 0) return grouped;
+  const rows = await db
+    .select()
+    .from(resumeVersions)
+    .where(
+      and(
+        eq(resumeVersions.workspaceId, workspaceId),
+        inArray(resumeVersions.resumeId, resumeIds),
+      ),
+    )
+    .orderBy(desc(resumeVersions.versionNumber));
+  for (const row of rows) {
+    const list = grouped.get(row.resumeId) ?? [];
+    list.push(resumeVersionDto(row));
+    grouped.set(row.resumeId, list);
+  }
+  return grouped;
 }
 
 function timelineDto(row: typeof timelineEntries.$inferSelect): TimelineEntryDto {
@@ -683,7 +834,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
   }
   return {
     status: "ok",
-    appVersion: "0.1.0",
+    appVersion: "0.2.0",
     schemaVersion,
     schemaCompatible: true,
     databaseReadable: true,
@@ -711,6 +862,243 @@ export async function getWorkspaceSettings(): Promise<WorkspaceSettingsDto> {
     weekStartsOn: row.settings.weekStartsOn,
     onboardingCompletedAtMs: row.settings.onboardingCompletedAtMs,
     version: row.settings.version,
+  };
+}
+
+export async function listResumes(
+  options: { includeArchived?: boolean } = {},
+): Promise<ResumeSummary[]> {
+  const { db, workspaceId } = await getDatabaseContext();
+  const conditions = [eq(resumes.workspaceId, workspaceId)];
+  if (!options.includeArchived) conditions.push(isNull(resumes.archivedAtMs));
+  const rows = await db
+    .select()
+    .from(resumes)
+    .where(and(...conditions))
+    .orderBy(asc(sql`${resumes.archivedAtMs} IS NOT NULL`), desc(resumes.updatedAtMs));
+  const versionMap = await versionsByResumeIds(db, workspaceId, rows.map((row) => row.id));
+  return rows.map((row) => resumeSummaryDto(row, versionMap.get(row.id)?.[0] ?? null));
+}
+
+export async function getResumeDetail(id: string): Promise<ResumeDetail | null> {
+  if (!zodUuid(id)) return null;
+  const { db, workspaceId } = await getDatabaseContext();
+  const rows = await db
+    .select()
+    .from(resumes)
+    .where(and(eq(resumes.workspaceId, workspaceId), eq(resumes.id, id)))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  const versions = (await versionsByResumeIds(db, workspaceId, [id])).get(id) ?? [];
+  return { ...resumeSummaryDto(row, versions[0] ?? null), versions };
+}
+
+export async function createResumeWithVersion(
+  input: CreateResumeInput,
+  versionInput: ResumeVersionUploadMetadata,
+): Promise<ResumeDetail> {
+  const data = parseDomainInput(createResumeInputSchema, input);
+  const resumeId = randomUUID();
+  const versionId = randomUUID();
+  const versionData = parseDomainInput(createResumeVersionInputSchema, {
+    ...versionInput,
+    resumeId,
+  });
+  const { db, workspaceId } = await getDatabaseContext();
+  const now = Date.now();
+  await db.transaction(async (tx) => {
+    await tx.insert(resumes).values({
+      id: resumeId,
+      workspaceId,
+      name: data.name,
+      targetDirection: data.targetDirection ?? null,
+      language: data.language ?? null,
+      archivedAtMs: null,
+      createdAtMs: now,
+      updatedAtMs: now,
+      version: 1,
+    });
+    await tx.insert(resumeVersions).values({
+      id: versionId,
+      workspaceId,
+      resumeId,
+      versionNumber: 1,
+      ...resumeFileColumns(versionData.sourceDocx, versionData.deliveryPdf),
+      changeSummary: normalizeOptionalText(versionData.changeSummary) ?? "初始版本",
+      createdAtMs: now,
+    });
+  });
+  const created = await getResumeDetail(resumeId);
+  if (!created) throw new DomainError("RESUME_CREATE_FAILED", "简历创建失败，请重试");
+  return created;
+}
+
+export async function addResumeVersion(
+  resumeId: string,
+  input: ResumeVersionUploadMetadata,
+): Promise<ResumeVersionDto> {
+  const data = parseDomainInput(createResumeVersionInputSchema, { ...input, resumeId });
+  const { db, workspaceId } = await getDatabaseContext();
+  const now = Date.now();
+  const versionId = randomUUID();
+  let createdVersionNumber = 0;
+  await db.transaction(async (tx) => {
+    const resumeRows = await tx
+      .select()
+      .from(resumes)
+      .where(and(eq(resumes.workspaceId, workspaceId), eq(resumes.id, resumeId)))
+      .limit(1);
+    const resume = resumeRows[0];
+    if (!resume) throw new DomainError("RESUME_NOT_FOUND", "没有找到这份简历");
+    if (resume.archivedAtMs != null) {
+      throw new DomainError("RESUME_ARCHIVED", "请先恢复这份简历，再上传新版本");
+    }
+    const maximumRows = await tx
+      .select({ value: sql<number>`coalesce(max(${resumeVersions.versionNumber}), 0)` })
+      .from(resumeVersions)
+      .where(
+        and(
+          eq(resumeVersions.workspaceId, workspaceId),
+          eq(resumeVersions.resumeId, resumeId),
+        ),
+      );
+    createdVersionNumber = Number(maximumRows[0]?.value ?? 0) + 1;
+    await tx.insert(resumeVersions).values({
+      id: versionId,
+      workspaceId,
+      resumeId,
+      versionNumber: createdVersionNumber,
+      ...resumeFileColumns(data.sourceDocx, data.deliveryPdf),
+      changeSummary: normalizeOptionalText(data.changeSummary),
+      createdAtMs: now,
+    });
+    const updated = await tx
+      .update(resumes)
+      .set({ updatedAtMs: now, version: sql`${resumes.version} + 1` })
+      .where(
+        and(
+          eq(resumes.workspaceId, workspaceId),
+          eq(resumes.id, resumeId),
+          eq(resumes.version, resume.version),
+        ),
+      )
+      .returning({ id: resumes.id });
+    requireCasUpdate(updated);
+  });
+  const rows = await db
+    .select()
+    .from(resumeVersions)
+    .where(and(eq(resumeVersions.workspaceId, workspaceId), eq(resumeVersions.id, versionId)))
+    .limit(1);
+  if (!rows[0]) throw new DomainError("RESUME_VERSION_CREATE_FAILED", "简历版本创建失败，请重试");
+  return resumeVersionDto(rows[0]);
+}
+
+export async function setResumeArchived(id: string, archived: boolean): Promise<ResumeDetail> {
+  if (!zodUuid(id)) throw new DomainError("RESUME_NOT_FOUND", "没有找到这份简历");
+  const { db, workspaceId } = await getDatabaseContext();
+  const now = Date.now();
+  const rows = await db
+    .select()
+    .from(resumes)
+    .where(and(eq(resumes.workspaceId, workspaceId), eq(resumes.id, id)))
+    .limit(1);
+  const resume = rows[0];
+  if (!resume) throw new DomainError("RESUME_NOT_FOUND", "没有找到这份简历");
+  if ((resume.archivedAtMs != null) === archived) {
+    const unchanged = await getResumeDetail(id);
+    return unchanged!;
+  }
+  const updated = await db
+    .update(resumes)
+    .set({
+      archivedAtMs: archived ? now : null,
+      updatedAtMs: now,
+      version: sql`${resumes.version} + 1`,
+    })
+    .where(
+      and(
+        eq(resumes.workspaceId, workspaceId),
+        eq(resumes.id, id),
+        eq(resumes.version, resume.version),
+      ),
+    )
+    .returning({ id: resumes.id });
+  requireCasUpdate(updated);
+  const result = await getResumeDetail(id);
+  if (!result) throw new DomainError("RESUME_NOT_FOUND", "没有找到这份简历");
+  return result;
+}
+
+export async function listResumeVersionChoices(): Promise<ResumeVersionChoice[]> {
+  const { db, workspaceId } = await getDatabaseContext();
+  const rows = await db
+    .select({ resume: resumes, version: resumeVersions })
+    .from(resumeVersions)
+    .innerJoin(
+      resumes,
+      and(
+        eq(resumes.workspaceId, resumeVersions.workspaceId),
+        eq(resumes.id, resumeVersions.resumeId),
+      ),
+    )
+    .where(
+      and(
+        eq(resumeVersions.workspaceId, workspaceId),
+        isNotNull(resumeVersions.deliveryPdfRelativePath),
+      ),
+    )
+    .orderBy(asc(sql`${resumes.archivedAtMs} IS NOT NULL`), desc(resumeVersions.createdAtMs));
+  return rows.map(({ resume, version }) => ({
+    id: version.id,
+    resumeId: resume.id,
+    resumeName: resume.name,
+    versionNumber: version.versionNumber,
+    pdfOriginalName: version.deliveryPdfOriginalName!,
+    createdAtMs: version.createdAtMs,
+    archived: resume.archivedAtMs != null,
+  }));
+}
+
+export async function getStoredResumeFileRecord(
+  versionId: string,
+  kind: "pdf" | "docx",
+): Promise<StoredResumeFileRecord | null> {
+  if (!zodUuid(versionId)) return null;
+  const { db, workspaceId } = await getDatabaseContext();
+  const rows = await db
+    .select()
+    .from(resumeVersions)
+    .where(and(eq(resumeVersions.workspaceId, workspaceId), eq(resumeVersions.id, versionId)))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  const values = kind === "pdf"
+    ? {
+        originalName: row.deliveryPdfOriginalName,
+        relativePath: row.deliveryPdfRelativePath,
+        mimeType: row.deliveryPdfMimeType,
+        sizeBytes: row.deliveryPdfSizeBytes,
+        sha256: row.deliveryPdfSha256,
+      }
+    : {
+        originalName: row.sourceDocxOriginalName,
+        relativePath: row.sourceDocxRelativePath,
+        mimeType: row.sourceDocxMimeType,
+        sizeBytes: row.sourceDocxSizeBytes,
+        sha256: row.sourceDocxSha256,
+      };
+  if (
+    !values.originalName || !values.relativePath || !values.mimeType
+    || values.sizeBytes == null || !values.sha256
+  ) return null;
+  return {
+    originalName: values.originalName,
+    relativePath: values.relativePath,
+    mimeType: values.mimeType,
+    sizeBytes: values.sizeBytes,
+    sha256: values.sha256,
   };
 }
 
@@ -800,9 +1188,94 @@ export async function getApplicationDetail(id: string): Promise<ApplicationDetai
     archivedFromStage: row.application.archivedFromStage as ActiveApplicationStage | null,
     archiveReason: row.application.archiveReason as ArchiveReason | null,
     archiveNote: row.application.archiveNote,
+    resumeVersionId: row.application.resumeVersionId,
     events: applicationEvents,
     timeline: timelineRows.map(timelineDto),
   };
+}
+
+export async function setApplicationResumeVersion(
+  applicationId: string,
+  resumeVersionId: string | null,
+  expectedVersion?: number,
+): Promise<ApplicationDetail> {
+  const data = parseDomainInput(setApplicationResumeVersionInputSchema, {
+    resumeVersionId,
+    expectedVersion,
+  });
+  const { db, workspaceId } = await getDatabaseContext();
+  const now = Date.now();
+  const correlationId = randomUUID();
+  await db.transaction(async (tx) => {
+    const application = await requireApplication(tx, workspaceId, applicationId);
+    verifyVersion(application, data.expectedVersion);
+    if (application.resumeVersionId === data.resumeVersionId) return;
+
+    let selected: { resumeName: string; versionNumber: number } | null = null;
+    if (data.resumeVersionId) {
+      const versionRows = await tx
+        .select({ resumeName: resumes.name, versionNumber: resumeVersions.versionNumber })
+        .from(resumeVersions)
+        .innerJoin(
+          resumes,
+          and(
+            eq(resumes.workspaceId, resumeVersions.workspaceId),
+            eq(resumes.id, resumeVersions.resumeId),
+          ),
+        )
+        .where(
+          and(
+            eq(resumeVersions.workspaceId, workspaceId),
+            eq(resumeVersions.id, data.resumeVersionId),
+            isNotNull(resumeVersions.deliveryPdfRelativePath),
+            isNull(resumes.archivedAtMs),
+          ),
+        )
+        .limit(1);
+      selected = versionRows[0] ?? null;
+      if (!selected) {
+        throw new DomainError(
+          "RESUME_VERSION_NOT_LINKABLE",
+          "请选择一份未归档且包含 PDF 的简历版本",
+        );
+      }
+    }
+
+    const updated = await tx
+      .update(applications)
+      .set({
+        resumeVersionId: data.resumeVersionId,
+        lastActivityAtMs: now,
+        updatedAtMs: now,
+        version: sql`${applications.version} + 1`,
+      })
+      .where(
+        and(
+          eq(applications.workspaceId, workspaceId),
+          eq(applications.id, applicationId),
+          eq(applications.version, application.version),
+          isNull(applications.deletedAtMs),
+        ),
+      )
+      .returning({ id: applications.id });
+    requireCasUpdate(updated);
+    await insertTimeline(tx, {
+      workspaceId,
+      applicationId,
+      entryType: data.resumeVersionId ? "RESUME_LINKED" : "RESUME_UNLINKED",
+      summary: selected
+        ? `关联投递简历：${selected.resumeName} · V${selected.versionNumber}`
+        : "移除投递简历关联",
+      details: { before: application.resumeVersionId, after: data.resumeVersionId },
+      sourceEntityType: data.resumeVersionId ? "RESUME_VERSION" : undefined,
+      sourceEntityId: data.resumeVersionId ?? undefined,
+      correlationId,
+      happenedAtMs: now,
+    });
+  });
+  const result = await getApplicationDetail(applicationId);
+  if (!result) throw new DomainError("APPLICATION_NOT_FOUND", "没有找到这条岗位申请");
+  return result;
 }
 
 export const getApplication = getApplicationDetail;

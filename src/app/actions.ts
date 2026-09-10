@@ -18,8 +18,10 @@ import {
   createApplication,
   createEvent,
   restoreApplication,
+  setApplicationResumeVersion,
   setApplicationAttention,
   setApplicationStage,
+  setResumeArchived,
   updateApplication,
   updateEventStatus,
 } from "@/lib/services";
@@ -147,6 +149,11 @@ function refreshApplication(applicationId?: string) {
   revalidatePath("/applications");
   revalidatePath("/calendar");
   if (applicationId) revalidatePath(`/applications/${applicationId}`);
+}
+
+function refreshResumes(resumeId?: string) {
+  revalidatePath("/resumes");
+  if (resumeId) revalidatePath(`/resumes/${resumeId}`);
 }
 
 function resultId(result: unknown) {
@@ -320,6 +327,44 @@ export async function restoreApplicationAction(_state: FormState, formData: Form
   }
   refreshApplication(applicationId);
   redirect(`/applications/${applicationId}?restored=1`);
+}
+
+export async function setResumeArchivedAction(
+  _state: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const resumeId = text(formData, "resumeId");
+  const archived = text(formData, "archived") === "true";
+  try {
+    await setResumeArchived(resumeId, archived);
+  } catch (error) {
+    return safeError(error, formData);
+  }
+  refreshResumes(resumeId);
+  return { ok: true, message: archived ? "简历已归档，历史版本仍然保留。" : "简历已恢复。" };
+}
+
+export async function setApplicationResumeVersionAction(
+  _state: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const applicationId = text(formData, "applicationId");
+  const resumeVersionId = optionalText(formData, "resumeVersionId");
+  try {
+    await setApplicationResumeVersion(
+      applicationId,
+      resumeVersionId,
+      numberOrUndefined(text(formData, "expectedVersion")),
+    );
+  } catch (error) {
+    return safeError(error, formData);
+  }
+  refreshApplication(applicationId);
+  refreshResumes();
+  return {
+    ok: true,
+    message: resumeVersionId ? "已记录这次申请使用的简历版本。" : "已移除简历关联。",
+  };
 }
 
 export async function createEventAction(previousState: FormState, formData: FormData): Promise<FormState> {

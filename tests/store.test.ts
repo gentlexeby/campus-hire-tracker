@@ -1,5 +1,6 @@
 import { access, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { createClient } from "@libsql/client/node";
@@ -48,6 +49,8 @@ describe("local data store", () => {
       DELETE FROM application_tags;
       DELETE FROM events;
       DELETE FROM applications;
+      DELETE FROM resume_versions;
+      DELETE FROM resumes;
       DELETE FROM positions;
       DELETE FROM tags;
       DELETE FROM companies;
@@ -98,7 +101,195 @@ describe("local data store", () => {
       generationId: first.generationId,
     });
     expect(Number.isNaN(Date.parse(String(active.activatedAt)))).toBe(false);
-    await expect(getHealthStatus()).resolves.toMatchObject({ status: "ok", schemaVersion: 1 });
+    await expect(getHealthStatus()).resolves.toMatchObject({ status: "ok", schemaVersion: 2 });
+  });
+
+  it("enforces complete resume file slots, per-series version numbers, and application references", async () => {
+    const { client, workspaceId } = await getDatabaseContext();
+    const now = Date.now();
+    const resumeId = randomUUID();
+    const sourceVersionId = randomUUID();
+    const deliveryVersionId = randomUUID();
+    const hash = "a".repeat(64);
+
+    await client.execute({
+      sql: `INSERT INTO resumes
+        (id, workspace_id, name, target_direction, language, archived_at_ms,
+         created_at_ms, updated_at_ms, version)
+        VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 1)`,
+      args: [resumeId, workspaceId, "校招主简历", "后端开发", "zh-CN", now, now],
+    });
+
+    await client.execute({
+      sql: `INSERT INTO resume_versions
+        (id, workspace_id, resume_id, version_number,
+         source_docx_original_name, source_docx_relative_path, source_docx_mime_type,
+         source_docx_size_bytes, source_docx_sha256, change_summary, created_at_ms)
+        VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        sourceVersionId,
+        workspaceId,
+        resumeId,
+        "校招简历.docx",
+        `${sourceVersionId}.docx`,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        1_024,
+        hash,
+        "初始版本",
+        now,
+      ],
+    });
+
+    await expect(
+      client.execute({
+        sql: `INSERT INTO resume_versions
+          (id, workspace_id, resume_id, version_number,
+           delivery_pdf_original_name, delivery_pdf_relative_path, delivery_pdf_mime_type,
+           delivery_pdf_size_bytes, delivery_pdf_sha256, created_at_ms)
+          VALUES (?, ?, ?, 2, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          deliveryVersionId,
+          workspaceId,
+          resumeId,
+          "校招简历.pdf",
+          `${deliveryVersionId}.pdf`,
+          "application/pdf",
+          2_048,
+          hash,
+          now,
+        ],
+      }),
+    ).resolves.toBeDefined();
+
+    await expect(
+      client.execute({
+        sql: `INSERT INTO resume_versions
+          (id, workspace_id, resume_id, version_number,
+           delivery_pdf_original_name, delivery_pdf_relative_path, created_at_ms)
+          VALUES (?, ?, ?, 3, ?, ?, ?)`,
+        args: [
+          randomUUID(),
+          workspaceId,
+          resumeId,
+          "不完整.pdf",
+          `${randomUUID()}.pdf`,
+          now,
+        ],
+      }),
+    ).rejects.toThrow();
+
+    await expect(
+      client.execute({
+        sql: `INSERT INTO resume_versions
+          (id, workspace_id, resume_id, version_number,
+           source_docx_original_name, source_docx_relative_path, source_docx_mime_type,
+           source_docx_size_bytes, source_docx_sha256, created_at_ms)
+          VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          randomUUID(),
+          workspaceId,
+          resumeId,
+          "重复版本.docx",
+          `${randomUUID()}.docx`,
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          512,
+          hash,
+          now,
+        ],
+      }),
+    ).rejects.toThrow();
+
+    const application = await createApplication({
+      companyName: "简历关联公司",
+      positionTitle: "后端工程师",
+    });
+    await expect(
+      client.execute({
+        sql: "UPDATE applications SET resume_version_id = ? WHERE id = ?",
+        args: [deliveryVersionId, application.id],
+      }),
+    ).resolves.toBeDefined();
+    await expect(
+      client.execute({
+        sql: "UPDATE applications SET resume_version_id = ? WHERE id = ?",
+        args: [randomUUID(), application.id],
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("migrates a schema-v1 store to schema v2 without losing existing applications", async () => {
+    const migrationRoot = path.join(dataRoot, "schema-v1-upgrade");
+    const generationId = "schema-v1-generation";
+    const databasePath = path.join(migrationRoot, "stores", generationId, "app.db");
+    await mkdir(path.dirname(databasePath), { recursive: true });
+    await mkdir(path.join(migrationRoot, "stores", generationId, "attachments"), {
+      recursive: true,
+    });
+    await mkdir(path.join(migrationRoot, "runtime", "releases", "development"), {
+      recursive: true,
+    });
+    await writeFile(
+      path.join(migrationRoot, "runtime", "active.json"),
+      JSON.stringify({
+        formatVersion: 1,
+        releaseId: "development",
+        generationId,
+        activatedAt: new Date().toISOString(),
+      }),
+      "utf8",
+    );
+
+    const url = `file:${databasePath.replace(/\\/g, "/")}`;
+    const setupClient = createClient({ url });
+    await setupClient.executeMultiple(`
+      CREATE TABLE workspaces (id TEXT PRIMARY KEY NOT NULL);
+      CREATE TABLE workspace_settings (workspace_id TEXT PRIMARY KEY NOT NULL);
+      CREATE TABLE companies (id TEXT PRIMARY KEY NOT NULL);
+      CREATE TABLE positions (id TEXT PRIMARY KEY NOT NULL);
+      CREATE TABLE applications (
+        id TEXT PRIMARY KEY NOT NULL,
+        workspace_id TEXT NOT NULL
+      );
+      CREATE TABLE tags (id TEXT PRIMARY KEY NOT NULL);
+      CREATE TABLE application_tags (application_id TEXT NOT NULL, tag_id TEXT NOT NULL);
+      CREATE TABLE events (id TEXT PRIMARY KEY NOT NULL);
+      CREATE TABLE timeline_entries (id TEXT PRIMARY KEY NOT NULL);
+      INSERT INTO workspaces (id) VALUES ('default-workspace');
+      INSERT INTO workspace_settings (workspace_id) VALUES ('default-workspace');
+      INSERT INTO applications (id, workspace_id)
+        VALUES ('existing-application', 'default-workspace');
+      PRAGMA user_version = 1;
+    `);
+    setupClient.close();
+
+    process.env.CAMPUS_HIRE_TRACKER_DATA_DIR = migrationRoot;
+    try {
+      const migrated = await getDatabaseContext();
+      const version = await migrated.client.execute("PRAGMA user_version");
+      const tables = await migrated.client.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('resumes', 'resume_versions') ORDER BY name",
+      );
+      const applicationColumns = await migrated.client.execute("PRAGMA table_info(applications)");
+      const existingApplication = await migrated.client.execute({
+        sql: "SELECT id, resume_version_id FROM applications WHERE id = ?",
+        args: ["existing-application"],
+      });
+
+      expect(Number(version.rows[0]?.user_version)).toBe(2);
+      expect(tables.rows.map((row) => String(row.name))).toEqual([
+        "resume_versions",
+        "resumes",
+      ]);
+      expect(applicationColumns.rows.map((row) => String(row.name))).toContain(
+        "resume_version_id",
+      );
+      expect(existingApplication.rows[0]).toMatchObject({
+        id: "existing-application",
+        resume_version_id: null,
+      });
+    } finally {
+      process.env.CAMPUS_HIRE_TRACKER_DATA_DIR = dataRoot;
+    }
   });
 
   it("publishes the initial pointer safely when Windows reports EXDEV", async () => {

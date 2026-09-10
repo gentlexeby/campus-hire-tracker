@@ -4,6 +4,8 @@
 > 存储：本地 SQLite/libSQL，由 Drizzle 管理 schema 与迁移
 > 业务术语以 [GLOSSARY.md](GLOSSARY.md) 为准；导入/备份格式以 [IMPORT_EXPORT_SPEC.md](IMPORT_EXPORT_SPEC.md) 为准。
 
+> **当前实现注记：** `codex/resume-library-mvp` 把数据库 `PRAGMA user_version` 从 1 升到 2，只新增 `resumes`、`resume_versions` 和 `applications.resume_version_id`。本页其余 M2/M3 表仍是长期设计，不代表当前数据库已经创建，也不是本次学习型迭代的发布门槛。
+
 ## 1. 建模原则
 
 1. `Application`（岗位申请）是核心聚合；公司和岗位是可复用主数据，申请代表“公司 + 岗位 + 招聘批次”的一次尝试。
@@ -61,6 +63,9 @@ erDiagram
     WORKSPACES ||--o{ COMPANIES : owns
     COMPANIES ||--o{ POSITIONS : offers
     POSITIONS ||--o{ APPLICATIONS : applied_as
+    WORKSPACES ||--o{ RESUMES : owns
+    RESUMES ||--o{ RESUME_VERSIONS : contains
+    RESUME_VERSIONS o|--o{ APPLICATIONS : selected_for
     APPLICATIONS ||--o{ INTERVIEW_ROUNDS : contains
     APPLICATIONS ||--o{ EVENTS : contextualizes
     APPLICATIONS o|--o| EVENTS : uses_as_attention_due
@@ -106,6 +111,7 @@ erDiagram
       text id PK
       text workspace_id FK
       text position_id FK
+      text resume_version_id FK
       text cycle_label
       text stage
       text attention_mode
@@ -239,6 +245,7 @@ erDiagram
 | `source_detail` | `TEXT NULL` | 自定义来源明细；仅 `CUSTOM` 使用且必须非空 |
 | `source_url` | `TEXT NULL` | 原始来源链接 |
 | `source_fair_id` | `TEXT NULL` | FK → `recruitment_fairs.id`；招聘会来源必须设置 |
+| `resume_version_id` | `TEXT NULL` | FK → `resume_versions.id`；本次申请选择的确切投递版本；当前服务只允许关联带 PDF 的未归档简历版本 |
 | `attention_mode` | `TEXT NOT NULL` | `ACTION` / `WAITING` / `NEEDS_ACTION` / `INACTIVE` |
 | `next_action_title` | `TEXT NULL` | `ACTION` 时非空；不是通用待办数组 |
 | `current_action_event_id` | `TEXT NULL` | FK → `events.id`；仅 `ACTION` 可用，若存在须为本申请的 `ACTION_DUE` |
@@ -276,7 +283,38 @@ attention 列使用完整真值表；“空”指 SQL `NULL`，必填文本还�
 
 “公司 + 岗位 + 招聘批次”只有**非唯一索引**。创建前查询并提示重复，但用户确认后允许继续创建。
 
-### 4.6 `tags`、`application_tags`、`material_tags`
+### 4.6 `resumes` 与 `resume_versions`（schema v2 已实现）
+
+`resumes` 保存用户对一组版本的命名，不保存简历正文：
+
+作为当前小切片，它只支持归档/恢复，不支持删除和回收站，因此是第 2.2 节通用软删除列约定的临时例外：没有 `deleted_at_ms` 或 `delete_operation_id`。若未来加入删除，再通过独立迁移补齐，不在本次提前实现。
+
+| 字段 | 类型/可空 | 约束与含义 |
+| --- | --- | --- |
+| `id` / `workspace_id` | `TEXT NOT NULL` | UUID 主键；归属本机工作区 |
+| `name` | `TEXT NOT NULL` | 用户可识别名称，去除首尾空白后不得为空 |
+| `target_direction` | `TEXT NULL` | 可选目标方向 |
+| `language` | `TEXT NULL` | 可选语言说明 |
+| `archived_at_ms` | `INTEGER NULL` | 非空时只读；归档不删除版本或历史关联 |
+| `created_at_ms` / `updated_at_ms` | `INTEGER NOT NULL` | 创建与最近变化时刻 |
+| `version` | `INTEGER NOT NULL` | 简历序列自身的乐观并发版本 |
+
+`resume_versions` 保存一次不可覆盖的上传快照：
+
+| 字段 | 类型/可空 | 约束与含义 |
+| --- | --- | --- |
+| `id` / `workspace_id` / `resume_id` | `TEXT NOT NULL` | UUID 主键、工作区和所属简历 |
+| `version_number` | `INTEGER NOT NULL` | 从 1 开始；同一 `resume_id` 内唯一并递增 |
+| `source_docx_*` | 一组可空列 | 原文件名、相对对象名、MIME、字节数、SHA-256；必须整组全空或全有 |
+| `delivery_pdf_*` | 一组可空列 | 原文件名、相对对象名、MIME、字节数、SHA-256；必须整组全空或全有 |
+| `change_summary` | `TEXT NULL` | 可选的简短版本说明 |
+| `created_at_ms` | `INTEGER NOT NULL` | 版本创建时刻 |
+
+每行至少存在一组文件元数据。相对对象名为应用生成的 `<uuid>.docx` 或 `<uuid>.pdf`，文件位于当前 generation 的 `attachments` 目录；原文件名只用于界面和下载响应。当前版本不删除或覆盖 `resume_versions`。`applications.resume_version_id` 可以为空，并采用 `ON DELETE RESTRICT` 保存历史关系。
+
+从 schema v1 升级时，在一个迁移事务中创建两张表、增加可空的 `resume_version_id` 和索引，再把 `user_version` 更新为 2。已有申请的新字段为 `NULL`，不要求补数据；不支持自动降级。
+
+### 4.7 `tags`、`application_tags`、`material_tags`
 
 `tags`：
 
@@ -838,6 +876,8 @@ stateDiagram-v2
 - 面试轮次取消只改轮次并写时间线；轮次软删除按第 5.3 节原子重挂其唯一面试事件，或按用户明确选择让事件同操作软删除；
 - 招聘会目标创建申请并设置 `RECRUITMENT_FAIR` 来源关联；
 - 资料 + 至少一个 link + 标签；
+- 创建简历 + 首个 `resume_versions` 记录；新增版本时读取当前最大版本号并写入下一号；
+- 选择或移除岗位的 `resume_version_id` + 对应时间线；新关联必须指向未归档且带 PDF 的版本；
 - 确认 CSV/XLSX 导入及 `import_changes`；
 - 软删除/恢复整棵拥有关系；公司/标签名称冲突时，用户选择的重命名或关系合并、关联去重及所有受影响申请时间线也在这一事务中完成；
 - 永久清除：固化附件删除清单 + `file_gc_jobs` + outbox + 删除业务行。
@@ -845,6 +885,8 @@ stateDiagram-v2
 ### 12.2 附件边界
 
 附件创建遵循第 6.3.1 节的 `数据根/tmp/uploads/<random>.part → fsync/校验 → stores/<generation_id>/attachments/<object_key> 原子 no-replace move → DB 登记` 协议；暂存目录与最终目录位于同一数据卷，但只有最终对象进入 generation，`attachments/` 内不放任何生成临时文件。文件移动发生在登记事务之前，因此最坏结果是可安全识别的未登记文件，而不是数据库引用一个从未稳定落盘的文件。附件删除反向处理：先在数据库事务中耐久登记 GC 意图，再在提交后凭 `file_gc_jobs.generation_id + object_key + expected_sha256` 定位并幂等删除文件。任何失败都按残留类型等待、重试或隔离，不能用通配目录清理补偿。
+
+简历 MVP 当前采用更小的实现边界：先把不超过 10 MiB 的上传读入内存，核对 PDF/DOCX 扩展名、MIME 和基本内容结构，再用随机对象名及 `wx`（目标已存在即失败）直接写入当前 `attachments` 目录并同步落盘；随后才执行数据库事务。如果校验或数据库登记失败，本次请求会尝试删除刚写入的对象。读取时重新核对大小、MIME 与 SHA-256。它没有实现通用附件的 staging、GC outbox、去重或孤儿扫描；这些仍属于后续学习任务。
 
 ### 12.3 全局 maintenance gate
 

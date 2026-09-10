@@ -14,7 +14,7 @@ export async function GET() {
     return NextResponse.json(
       {
         status: "error",
-        appVersion: "0.1.0",
+        appVersion: "0.2.0",
         schemaCompatible: false,
         databaseReadable: false,
         generationReady: false,

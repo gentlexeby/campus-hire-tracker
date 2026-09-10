@@ -12,7 +12,13 @@ export function proxy(request: NextRequest) {
 
   if (request.nextUrl.pathname.startsWith("/api/") && MUTATING_METHODS.has(request.method)) {
     const origin = request.headers.get("origin");
-    if (origin !== EXPECTED_ORIGIN) {
+    // Browser form navigations can omit Origin or send the opaque value "null".
+    // Sec-Fetch-Site is a forbidden browser header, so it is the reliable
+    // same-origin fallback for those cases.
+    const isSameOrigin = origin && origin !== "null"
+      ? origin === EXPECTED_ORIGIN
+      : request.headers.get("sec-fetch-site") === "same-origin";
+    if (!isSameOrigin) {
       return new NextResponse("Invalid Origin", { status: 403 });
     }
   }

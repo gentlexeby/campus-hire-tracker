@@ -7,6 +7,7 @@ import {
   ApplicationsIcon,
   CalendarIcon,
   PlusIcon,
+  ResumeIcon,
   SettingsIcon,
   SparkIcon,
   TodayIcon,
@@ -15,6 +16,7 @@ import {
 const navigation = [
   { href: "/", label: "今日", icon: TodayIcon },
   { href: "/applications", label: "申请", icon: ApplicationsIcon },
+  { href: "/resumes", label: "简历", icon: ResumeIcon },
   { href: "/calendar", label: "日历", icon: CalendarIcon },
   { href: "/settings", label: "设置", icon: SettingsIcon },
 ] as const;

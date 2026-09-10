@@ -10,7 +10,7 @@ import { defaultTimezone, DomainError } from "@/lib/domain";
 import { publishPreparedInitialFile } from "@/lib/db/atomic-file";
 import * as schema from "@/lib/db/schema";
 
-export const DATABASE_SCHEMA_VERSION = 1;
+export const DATABASE_SCHEMA_VERSION = 2;
 export const DEFAULT_WORKSPACE_ID = "default-workspace";
 
 export interface ActiveRuntimePointer {
@@ -28,6 +28,56 @@ export interface DatabaseContext {
   databasePath: string;
   workspaceId: string;
 }
+
+const RESUME_TABLES_SQL = `
+CREATE TABLE resumes (
+  id TEXT PRIMARY KEY NOT NULL,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  name TEXT NOT NULL CHECK(length(trim(name)) > 0),
+  target_direction TEXT,
+  language TEXT,
+  archived_at_ms INTEGER,
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  version INTEGER NOT NULL
+);
+CREATE INDEX resumes_workspace_archive_idx
+  ON resumes(workspace_id, archived_at_ms, updated_at_ms);
+
+CREATE TABLE resume_versions (
+  id TEXT PRIMARY KEY NOT NULL,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  resume_id TEXT NOT NULL,
+  version_number INTEGER NOT NULL CHECK(version_number > 0),
+  source_docx_original_name TEXT,
+  source_docx_relative_path TEXT,
+  source_docx_mime_type TEXT,
+  source_docx_size_bytes INTEGER,
+  source_docx_sha256 TEXT,
+  delivery_pdf_original_name TEXT,
+  delivery_pdf_relative_path TEXT,
+  delivery_pdf_mime_type TEXT,
+  delivery_pdf_size_bytes INTEGER,
+  delivery_pdf_sha256 TEXT,
+  change_summary TEXT,
+  created_at_ms INTEGER NOT NULL,
+  UNIQUE(resume_id, version_number),
+  FOREIGN KEY(resume_id) REFERENCES resumes(id) ON DELETE RESTRICT,
+  CHECK(
+    (source_docx_original_name IS NULL) = (source_docx_relative_path IS NULL) AND
+    (source_docx_original_name IS NULL) = (source_docx_mime_type IS NULL) AND
+    (source_docx_original_name IS NULL) = (source_docx_size_bytes IS NULL) AND
+    (source_docx_original_name IS NULL) = (source_docx_sha256 IS NULL)
+  ),
+  CHECK(
+    (delivery_pdf_original_name IS NULL) = (delivery_pdf_relative_path IS NULL) AND
+    (delivery_pdf_original_name IS NULL) = (delivery_pdf_mime_type IS NULL) AND
+    (delivery_pdf_original_name IS NULL) = (delivery_pdf_size_bytes IS NULL) AND
+    (delivery_pdf_original_name IS NULL) = (delivery_pdf_sha256 IS NULL)
+  ),
+  CHECK(source_docx_relative_path IS NOT NULL OR delivery_pdf_relative_path IS NOT NULL)
+);
+`;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS workspaces (
@@ -93,6 +143,8 @@ CREATE TABLE IF NOT EXISTS positions (
 CREATE INDEX IF NOT EXISTS positions_match_idx
   ON positions(workspace_id, company_id, normalized_title, location, deleted_at_ms);
 
+${RESUME_TABLES_SQL}
+
 CREATE TABLE IF NOT EXISTS applications (
   id TEXT PRIMARY KEY NOT NULL,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -105,6 +157,7 @@ CREATE TABLE IF NOT EXISTS applications (
   source_detail TEXT,
   source_url TEXT,
   source_fair_id TEXT,
+  resume_version_id TEXT REFERENCES resume_versions(id) ON DELETE RESTRICT,
   attention_mode TEXT NOT NULL CHECK(attention_mode IN ('ACTION','WAITING','NEEDS_ACTION','INACTIVE')),
   next_action_title TEXT,
   current_action_event_id TEXT,
@@ -156,6 +209,7 @@ CREATE INDEX IF NOT EXISTS applications_stage_idx ON applications(workspace_id, 
 CREATE INDEX IF NOT EXISTS applications_attention_idx ON applications(workspace_id, attention_mode, deleted_at_ms);
 CREATE INDEX IF NOT EXISTS applications_duplicate_idx ON applications(workspace_id, position_id, normalized_cycle_label, deleted_at_ms);
 CREATE INDEX IF NOT EXISTS applications_priority_idx ON applications(workspace_id, priority, last_activity_at_ms);
+CREATE INDEX IF NOT EXISTS applications_resume_version_idx ON applications(workspace_id, resume_version_id);
 
 CREATE TABLE IF NOT EXISTS tags (
   id TEXT PRIMARY KEY NOT NULL,
@@ -312,7 +366,7 @@ CREATE INDEX IF NOT EXISTS timeline_application_idx
 
 `;
 
-const REQUIRED_TABLES = [
+const REQUIRED_SCHEMA_V1_TABLES = [
   "workspaces",
   "workspace_settings",
   "companies",
@@ -323,6 +377,30 @@ const REQUIRED_TABLES = [
   "events",
   "timeline_entries",
 ] as const;
+
+const REQUIRED_TABLES = [
+  ...REQUIRED_SCHEMA_V1_TABLES,
+  "resumes",
+  "resume_versions",
+] as const;
+
+async function migrateSchemaVersion1To2(client: Client): Promise<void> {
+  const transaction = await client.transaction("write");
+  try {
+    await transaction.executeMultiple(RESUME_TABLES_SQL);
+    await transaction.execute(
+      "ALTER TABLE applications ADD COLUMN resume_version_id TEXT REFERENCES resume_versions(id) ON DELETE RESTRICT",
+    );
+    await transaction.execute(
+      "CREATE INDEX applications_resume_version_idx ON applications(workspace_id, resume_version_id)",
+    );
+    await transaction.execute(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
+    await transaction.commit();
+  } catch (error) {
+    await transaction.rollback();
+    throw error;
+  }
+}
 
 const contexts = new Map<string, Promise<DatabaseContext>>();
 
@@ -435,7 +513,11 @@ async function initializeDatabase(dataRoot: string): Promise<DatabaseContext> {
     if (existingVersion > DATABASE_SCHEMA_VERSION) {
       throw new DomainError("SCHEMA_INCOMPATIBLE", "本地数据由更新版本创建，请升级应用后再打开");
     }
-    if (existingVersion !== 0 && existingVersion !== DATABASE_SCHEMA_VERSION) {
+    if (
+      existingVersion !== 0 &&
+      existingVersion !== 1 &&
+      existingVersion !== DATABASE_SCHEMA_VERSION
+    ) {
       throw new DomainError("SCHEMA_INCOMPATIBLE", "本地数据版本不受支持，请使用兼容版本恢复");
     }
 
@@ -456,7 +538,8 @@ async function initializeDatabase(dataRoot: string): Promise<DatabaseContext> {
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
       );
       const presentTables = new Set(tableResult.rows.map((row) => String(row.name)));
-      const missingTables = REQUIRED_TABLES.filter((table) => !presentTables.has(table));
+      const expectedTables = existingVersion === 1 ? REQUIRED_SCHEMA_V1_TABLES : REQUIRED_TABLES;
+      const missingTables = expectedTables.filter((table) => !presentTables.has(table));
       if (missingTables.length > 0) {
         throw new DomainError("SCHEMA_INCOMPATIBLE", "本地数据结构不完整，请使用恢复工具检查");
       }
@@ -490,6 +573,8 @@ async function initializeDatabase(dataRoot: string): Promise<DatabaseContext> {
         ],
         "write",
       );
+    } else if (existingVersion === 1) {
+      await migrateSchemaVersion1To2(client);
     }
 
     const db = drizzle(client, { schema });
