@@ -86,7 +86,7 @@ npm --version
 
 ### 2. 克隆仓库
 
-私有仓库使用者需要先接受 GitHub 邀请，并登录有权限的账号。首次克隆时，Git Credential Manager 可能会打开浏览器要求登录；不要把 Personal Access Token 写入克隆地址。
+这是公开仓库，通过 HTTPS 克隆不需要接受邀请，也不需要把 GitHub Personal Access Token 写入克隆地址。只有向仓库推送代码时才需要相应权限。
 
 ```powershell
 git clone https://github.com/gentlexeby/campus-hire-tracker.git
@@ -227,6 +227,10 @@ ICS 是单向文件快照，不是个人数据备份：系统日历中的修改�
 普通的 `git pull`、删除源码目录或重新克隆仓库不会自动删除个人数据。反过来，删除源码目录也不等于删除个人数据。
 
 应用没有账号体系、云同步或默认遥测。当前数据库没有应用层加密；`127.0.0.1` 只限制网络监听，不等于磁盘加密或 Windows 账号隔离。不要把 `%LOCALAPPDATA%\CampusHireTracker`、数据库文件、测试报告或含个人信息的 ICS 文件提交到 GitHub。
+
+> **公开仓库隐私提醒：** 不要提交真实简历、JD 原文、面经、联系方式、包含会议链接的 `.ics`、数据库、备份、Cookie、令牌、私钥或证书。需要临时在仓库目录内处理私密文件时，请只放入根目录下的 `private-data/`、`uploads/` 或 `exports/`；这些目录已被 `.gitignore` 忽略。提交前仍应执行 `git status` 逐项核对，不能把忽略规则当作唯一保护。
+
+`.gitignore` 没有全局忽略 `.pdf` 或 `.docx`，以便未来可以提交不含个人信息的文档模板和测试夹具。因此，真实简历和 JD 即使采用这些格式，也必须由提交者主动放在上述私密目录或仓库之外。
 
 ### 当前阶段的人工备份
 

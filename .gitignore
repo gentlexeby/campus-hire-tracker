@@ -12,10 +12,24 @@
 /.test-data/
 
 # local environment and diagnostics
-.env
-.env.local
+.env*
+!.env.example
 *.log
 npm-debug.log*
+
+# credentials, private keys, and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.crt
+*.cer
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
 
 # TypeScript
 *.tsbuildinfo
@@ -32,8 +46,14 @@ Thumbs.db
 /backups/
 /runtime/
 /tmp/
+/private-data/
+/uploads/
+/exports/
 *.db
+*.db-journal
 *.db-shm
 *.db-wal
+*.sqlite
+*.sqlite3
 *.chtrbak
 campus-hire-tracker-backup-*.zip
